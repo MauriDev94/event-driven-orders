@@ -36,6 +36,4 @@ def get_reserve_stock_use_case(
     event_publisher: Annotated[EventPublisher, Depends(get_event_publisher)],
 ) -> ReserveStock:
     """Provide the ReserveStock use case."""
-    return ReserveStock(
-        inventory_repository=inventory_repository, event_publisher=event_publisher
-    )
+    return ReserveStock(inventory_repository=inventory_repository, event_publisher=event_publisher)

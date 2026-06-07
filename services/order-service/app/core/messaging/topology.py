@@ -21,12 +21,8 @@ async def declare_topology(channel: aio_pika.abc.AbstractRobustChannel) -> None:
     completed in later phases. Declaring is idempotent on RabbitMQ, so this
     is safe to call on every startup.
     """
-    await channel.declare_exchange(
-        ORDERS_EXCHANGE, aio_pika.ExchangeType.TOPIC, durable=True
-    )
-    await channel.declare_exchange(
-        ORDERS_DLX, aio_pika.ExchangeType.TOPIC, durable=True
-    )
+    await channel.declare_exchange(ORDERS_EXCHANGE, aio_pika.ExchangeType.TOPIC, durable=True)
+    await channel.declare_exchange(ORDERS_DLX, aio_pika.ExchangeType.TOPIC, durable=True)
     # Dead-letter queue first so the main queue can reference it.
     await channel.declare_queue(ORDER_RESULTS_DLQ, durable=True)
     await channel.declare_queue(

@@ -4,7 +4,9 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
-ignore = ["E501"]
+# E501: line length is handled by the formatter. UP046: keep the explicit
+# Generic[Input, Output] base on UseCase (PEP 695 type params not adopted yet).
+ignore = ["E501", "UP046"]
 
 [tool.pytest.ini_options]
 # `.` makes the local `app` package importable; `../..` makes the repo-root
@@ -16,3 +18,32 @@ markers = [
     "unit: pure domain/application tests with no I/O",
     "integration: tests that exercise the app or external boundaries",
 ]
+
+[tool.mypy]
+python_version = "3.12"
+explicit_package_bases = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Starlette types add_exception_handler for the base Exception signature only.
+# Our domain-specific handlers (NotFoundError, ConflictError, ...) are valid at
+# runtime but mypy can't verify the narrowed exception type.
+module = "app.core.exceptions.error_handling"
+disable_error_code = ["arg-type"]
+
+[[tool.mypy.overrides]]
+# aio-pika stubs declare AbstractRobustConnection.channel() as returning the
+# base AbstractChannel; at runtime it is a robust channel, so the attribute
+# annotation is correct and the assignment is safe.
+module = "app.core.messaging.connection"
+disable_error_code = ["assignment"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["*/__init__.py", "tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+# Post-scaffold floor: real coverage is ~46% (mostly domain + health). The
+# target is 85% — TODO subir a 85 a medida que crezca la lógica de negocio.
+fail_under = 40

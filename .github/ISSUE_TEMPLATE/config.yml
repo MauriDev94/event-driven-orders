@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 📖 Arquitectura y puesta en marcha
+    url: https://github.com/MauriDev94/event-driven-orders#readme
+    about: Revisá el README (arquitectura, servicios, cómo levantar el stack) antes de abrir un issue.
+  - name: 🐇 RabbitMQ Management (local)
+    url: http://localhost:15672
+    about: Inspeccioná exchanges, colas y DLQ con el stack levantado (make up).

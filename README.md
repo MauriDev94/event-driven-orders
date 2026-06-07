@@ -53,7 +53,8 @@ Cada servicio aplica **Clean Architecture + DDD** (capas `domain` / `application
 event-driven-orders/
 ├── docker-compose.yml          # RabbitMQ + 2× Postgres + Mailhog + 3 servicios
 ├── .env.example                # variables para docker-compose
-├── Makefile                    # up / down / logs / ps / test / lint / format
+├── Makefile                    # install / up / down / logs / ps / test / lint / format
+├── .github/                    # CI (ci.yml) + plantillas de PR/issues + CODEOWNERS
 ├── shared/contracts/           # integration events (Pydantic): BaseEvent + Order*/Stock*
 └── services/
     ├── order-service/          # FastAPI: REST + consumer (feature: orders)
@@ -82,14 +83,50 @@ make down      # detener
 | Mailhog UI | http://localhost:8025 |
 | Postgres orders / inventory | localhost:5433 / localhost:5434 |
 
+### Entorno de desarrollo local (venv compartido)
+
+Un único `.venv/` en la raíz del monorepo concentra las dependencias de los 3
+servicios + las herramientas de dev (ruff, mypy, pytest, pytest-cov). Es solo
+para DX local — **Docker sigue usando el `requirements.txt` de cada servicio**
+para aislamiento en runtime.
+
+```bash
+make install                     # crea .venv e instala runtime + dev de los 3 servicios
+
+# activar el venv:
+source .venv/Scripts/activate    # Windows (Git Bash)
+source .venv/bin/activate        # Unix / macOS
+```
+
 ### Tests y lint (local)
 
 ```bash
-# por servicio (instalar dev deps primero: pip install -r requirements-dev.txt)
-cd services/order-service && pytest
-make test      # corre los tests de los 3 servicios
-make lint      # ruff sobre los 3 servicios + shared
+make lint      # ruff check + ruff format --check + mypy en los 3 servicios + ruff sobre shared
+make test      # pytest con cobertura en los 3 servicios (respeta el gate)
+make format    # ruff format (auto-formatea los 3 servicios + shared)
+
+# por servicio:
+cd services/order-service && pytest -q --cov=app
 ```
+
+> El venv tiene que estar activado: los targets `lint`/`test`/`format` usan
+> `ruff`/`mypy`/`pytest` directamente desde el venv.
+
+## CI/CD
+
+GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
+
+| Job | Qué hace |
+|---|---|
+| `quality` (matrix × 3 servicios) | `ruff check` + `ruff format --check` + `mypy app` |
+| `quality-shared` | `ruff check` + `ruff format --check` sobre `shared/` |
+| `tests-db` (matrix: order, inventory) | `pytest` con cobertura sobre un **Postgres 16** efímero (service container con healthcheck `pg_isready`) |
+| `tests` (notification) | `pytest` con cobertura, sin DB |
+
+- **Python 3.12** con cache de `pip` por servicio. `actions/checkout@v4`, `actions/setup-python@v5`, `actions/upload-artifact@v4`.
+- **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). Hoy está en **40** (piso post-scaffold, cobertura real ~46-49%); el objetivo es **85** a medida que crezca la lógica de negocio.
+- El `coverage.xml` de cada servicio se sube como artefacto (`coverage-<servicio>`).
+- **Secret opcional `CI_DB_PASSWORD`:** password del Postgres de CI. Si no está seteado, el workflow usa un valor descartable para que el CI quede verde sin configuración manual.
 
 ## Decisiones de arquitectura (Fase 0)
 
@@ -111,6 +148,7 @@ Idempotency keys · Dead-letter queues (DLQ) · Retries con backoff · Eventual 
 ## Estado
 
 - [x] **Fase 0** — Scaffold + `docker-compose` (RabbitMQ + Postgres + Mailhog)
+- [x] **Fase 0.5** — CI/CD (GitHub Actions), plantillas de GitHub y venv de desarrollo
 - [ ] Fase 1 — `order-service`: POST /orders + publica `OrderCreated`
 - [ ] Fase 2 — `inventory-service`: consume, reserva stock, idempotencia
 - [ ] Fase 3 — `order-service` consume resultado → confirma/rechaza

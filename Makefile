@@ -3,11 +3,33 @@
 
 SERVICES := order-service inventory-service notification-service
 
-.PHONY: help up down logs ps build test lint format
+# Shared local dev venv at the repo root. The venv is for DX (one place to run
+# ruff/mypy/pytest across all services); Docker still uses each service's own
+# requirements.txt for runtime isolation.
+VENV := .venv
+ifeq ($(OS),Windows_NT)
+    VENV_PY := $(VENV)/Scripts/python
+else
+    VENV_PY := $(VENV)/bin/python
+endif
+
+.PHONY: help install up down logs ps build test lint format
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+
+install: ## Create the shared .venv and install every service's deps (runtime + dev)
+	python -m venv $(VENV)
+	$(VENV_PY) -m pip install --upgrade pip
+	@for svc in $(SERVICES); do \
+		echo "==> installing $$svc (runtime + dev)"; \
+		$(VENV_PY) -m pip install -r services/$$svc/requirements-dev.txt || exit 1; \
+	done
+	@echo ""
+	@echo "Done. Activate the venv:"
+	@echo "  Windows : source $(VENV)/Scripts/activate"
+	@echo "  Unix    : source $(VENV)/bin/activate"
 
 up: ## Start the full stack (infra + services) in the background
 	docker compose up -d --build
@@ -24,16 +46,16 @@ ps: ## Show running containers and health
 build: ## Build all service images
 	docker compose build
 
-test: ## Run the test suite of every service
+test: ## Run every service's test suite with coverage (enforces the gate)
 	@for svc in $(SERVICES); do \
 		echo "==> testing $$svc"; \
-		(cd services/$$svc && python -m pytest) || exit 1; \
+		(cd services/$$svc && python -m pytest -q --cov=app --cov-report=term-missing) || exit 1; \
 	done
 
-lint: ## Run ruff over every service and the shared package
+lint: ## Lint + format check + type check every service and lint the shared package
 	@for svc in $(SERVICES); do \
 		echo "==> linting $$svc"; \
-		(cd services/$$svc && ruff check .) || exit 1; \
+		(cd services/$$svc && ruff check . && ruff format --check . && mypy app) || exit 1; \
 	done
 	ruff check shared
 

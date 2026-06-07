@@ -1,0 +1,190 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Lint + format + type-check every service. Matrix fans out over the three
+  # services; each runs ruff check, ruff format --check and mypy over its app/.
+  # ---------------------------------------------------------------------------
+  quality:
+    name: Quality (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [order-service, inventory-service, notification-service]
+
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: services/${{ matrix.service }}/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Ruff lint
+        run: ruff check .
+
+      - name: Ruff format check
+        run: ruff format --check .
+
+      - name: Type check
+        run: mypy app
+
+  # ---------------------------------------------------------------------------
+  # Lint the shared contracts package (lives at the repo root, outside any
+  # single service). Mirrors `make lint`'s `ruff check shared`.
+  # ---------------------------------------------------------------------------
+  quality-shared:
+    name: Quality (shared)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install ruff
+        run: pip install ruff==0.15.11
+
+      - name: Ruff lint
+        run: ruff check shared
+
+      - name: Ruff format check
+        run: ruff format --check shared
+
+  # ---------------------------------------------------------------------------
+  # Tests for the services that own a database (order, inventory). Each gets a
+  # throwaway Postgres 16 service container with a pg_isready healthcheck. The
+  # app reads db_* from the environment (pydantic-settings), so the health
+  # check can reach a real DB. Coverage gate lives in each pyproject.toml
+  # (fail_under = 40, a post-scaffold floor — TODO subir a 85).
+  # ---------------------------------------------------------------------------
+  tests-db:
+    name: Tests (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    needs: [quality, quality-shared]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: order-service
+            db_name: orders
+            db_user: orders
+          - service: inventory-service
+            db_name: inventory
+            db_user: inventory
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: ${{ matrix.db_name }}
+          POSTGRES_USER: ${{ matrix.db_user }}
+          # Optional repo secret; falls back to a throwaway value so CI is green
+          # without manual setup. Set CI_DB_PASSWORD in repo settings to override.
+          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD || 'ci-postgres-pwd' }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: services/${{ matrix.service }}
+
+    env:
+      db_host: localhost
+      db_port: "5432"
+      db_user: ${{ matrix.db_user }}
+      db_password: ${{ secrets.CI_DB_PASSWORD || 'ci-postgres-pwd' }}
+      db_name: ${{ matrix.db_name }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: services/${{ matrix.service }}/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: pytest -q --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.service }}
+          path: services/${{ matrix.service }}/coverage.xml
+
+  # ---------------------------------------------------------------------------
+  # Tests for notification-service, which has no database in Fase 0 — no
+  # Postgres service container needed.
+  # ---------------------------------------------------------------------------
+  tests:
+    name: Tests (notification-service)
+    runs-on: ubuntu-latest
+    needs: [quality, quality-shared]
+
+    defaults:
+      run:
+        working-directory: services/notification-service
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: services/notification-service/requirements-dev.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run test suite
+        run: pytest -q --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-notification-service
+          path: services/notification-service/coverage.xml
