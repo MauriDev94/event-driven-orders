@@ -1,0 +1,153 @@
+# ----------------------------------------------------------------------------
+# Event-Driven Orders — full local stack
+#
+# Build context is the REPO ROOT for every service (not the service folder) so
+# that the shared `shared/contracts/` package is available inside each image.
+# Each service points to its own Dockerfile via `build.dockerfile`.
+# ----------------------------------------------------------------------------
+
+services:
+  # --- Infrastructure ------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: edo_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+    ports:
+      - "5672:5672"    # AMQP
+      - "15672:15672"  # Management UI
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - edo_net
+
+  postgres-orders:
+    image: postgres:16-alpine
+    container_name: edo_postgres_orders
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${ORDERS_DB_USER}
+      POSTGRES_PASSWORD: ${ORDERS_DB_PASSWORD}
+      POSTGRES_DB: ${ORDERS_DB_NAME}
+    ports:
+      - "${ORDERS_DB_PORT}:5432"
+    volumes:
+      - postgres_data_orders:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ORDERS_DB_USER} -d ${ORDERS_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - edo_net
+
+  postgres-inventory:
+    image: postgres:16-alpine
+    container_name: edo_postgres_inventory
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${INVENTORY_DB_USER}
+      POSTGRES_PASSWORD: ${INVENTORY_DB_PASSWORD}
+      POSTGRES_DB: ${INVENTORY_DB_NAME}
+    ports:
+      - "${INVENTORY_DB_PORT}:5432"
+    volumes:
+      - postgres_data_inventory:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${INVENTORY_DB_USER} -d ${INVENTORY_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - edo_net
+
+  mailhog:
+    image: mailhog/mailhog
+    container_name: edo_mailhog
+    restart: unless-stopped
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # Web UI
+    networks:
+      - edo_net
+
+  # --- Services ------------------------------------------------------------
+  order-service:
+    build:
+      context: .
+      dockerfile: services/order-service/Dockerfile
+    container_name: edo_order_service
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      DB_HOST: postgres-orders
+      DB_PORT: 5432
+      DB_USER: ${ORDERS_DB_USER}
+      DB_PASSWORD: ${ORDERS_DB_PASSWORD}
+      DB_NAME: ${ORDERS_DB_NAME}
+    ports:
+      - "8001:8000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres-orders:
+        condition: service_healthy
+    networks:
+      - edo_net
+
+  inventory-service:
+    build:
+      context: .
+      dockerfile: services/inventory-service/Dockerfile
+    container_name: edo_inventory_service
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      DB_HOST: postgres-inventory
+      DB_PORT: 5432
+      DB_USER: ${INVENTORY_DB_USER}
+      DB_PASSWORD: ${INVENTORY_DB_PASSWORD}
+      DB_NAME: ${INVENTORY_DB_NAME}
+    ports:
+      - "8002:8000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres-inventory:
+        condition: service_healthy
+    networks:
+      - edo_net
+
+  notification-service:
+    build:
+      context: .
+      dockerfile: services/notification-service/Dockerfile
+    container_name: edo_notification_service
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SENDER_EMAIL: ${SMTP_SENDER_EMAIL}
+    ports:
+      - "8003:8000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mailhog:
+        condition: service_started
+    networks:
+      - edo_net
+
+volumes:
+  postgres_data_orders:
+  postgres_data_inventory:
+
+networks:
+  edo_net:
+    driver: bridge
