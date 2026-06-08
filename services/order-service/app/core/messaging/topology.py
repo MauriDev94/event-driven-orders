@@ -9,6 +9,7 @@ ORDER_RESULTS_QUEUE = "order-service.inventory-results"
 ORDER_RESULTS_DLQ = "order-service.inventory-results.dlq"
 
 # Routing keys (event_type values, see shared.contracts).
+ROUTING_ORDER_CREATED = "order.created"
 ROUTING_STOCK_RESERVED = "stock.reserved"
 ROUTING_STOCK_REJECTED = "stock.rejected"
 
