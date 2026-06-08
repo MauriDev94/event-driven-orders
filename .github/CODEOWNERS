@@ -1,0 +1,6 @@
+# Default owner
+* @MauriDev94
+
+# Critical areas
+/.github/workflows/ @MauriDev94
+/shared/contracts/ @MauriDev94
