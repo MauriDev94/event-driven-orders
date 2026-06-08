@@ -1,0 +1,18 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+# `.` makes the local `app` package importable; `../..` makes the repo-root
+# `shared` package importable when running tests from this service folder.
+pythonpath = [".", "../.."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: pure domain/application tests with no I/O",
+    "integration: tests that exercise the app or external boundaries",
+]

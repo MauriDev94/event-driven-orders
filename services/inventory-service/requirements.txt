@@ -1,0 +1,5 @@
+fastapi[standard]==0.136.0
+SQLAlchemy>=2.0.49
+pydantic-settings==2.13.1
+psycopg2-binary==2.9.11
+aio-pika>=9.4,<10
