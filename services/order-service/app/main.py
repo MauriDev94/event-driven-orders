@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from app.core.exceptions.error_handling import register_exception_handlers
 from app.core.messaging.connection import RabbitMQConnection
+from app.core.messaging.topology import declare_topology
 from app.core.providers.db import get_db_session
 from app.core.providers.env_config import get_env_config
 from app.features.orders.presentation.http.router import router as orders_router
@@ -18,14 +19,16 @@ async def lifespan(app: FastAPI):
     """Open the broker connection on startup, close it on shutdown.
 
     A failed broker connection must NOT crash the app: ``/health`` reports
-    the broker as unhealthy instead. Real topology declaration and consumer
-    wiring land in later phases — this is the scaffold skeleton.
+    the broker as unhealthy instead. On a successful connection the orders
+    topology (exchanges, queues, bindings) is declared — declaration is
+    idempotent on RabbitMQ, so it is safe to run on every startup.
     """
     config = get_env_config()
     broker = RabbitMQConnection(config.rabbitmq_url)
     try:
         await broker.connect()
-        logger.info("order-service connected to broker")
+        await declare_topology(broker.channel)
+        logger.info("order-service connected to broker and declared topology")
     except Exception as exc:  # noqa: BLE001 - startup must stay resilient
         logger.warning("order-service could not connect to broker: %s", exc)
     app.state.broker = broker

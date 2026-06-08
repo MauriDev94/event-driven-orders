@@ -8,6 +8,11 @@ select = ["E", "F", "I", "B", "UP"]
 # Generic[Input, Output] base on UseCase (PEP 695 type params not adopted yet).
 ignore = ["E501", "UP046"]
 
+[tool.ruff.lint.per-file-ignores]
+# Alembic env.py resolves the DB URL before importing app models — those imports
+# are intentionally below module-level code, so E402 is expected here.
+"app/core/data/source/local/alembic/env.py" = ["E402"]
+
 [tool.pytest.ini_options]
 # `.` makes the local `app` package importable; `../..` makes the repo-root
 # `shared` package importable when running tests from this service folder.
@@ -38,12 +43,22 @@ disable_error_code = ["arg-type"]
 module = "app.core.messaging.connection"
 disable_error_code = ["assignment"]
 
+[[tool.mypy.overrides]]
+# Alembic's env.py is generated boilerplate; the DB URL resolved from env vars
+# is seen as str | None by mypy even though it is always set at runtime.
+module = "app.core.data.source.local.alembic.env"
+ignore_errors = true
+
 [tool.coverage.run]
 source = ["app"]
 omit = ["*/__init__.py", "tests/*"]
 
 [tool.coverage.report]
 show_missing = true
-# Post-scaffold floor: real coverage is ~46% (mostly domain + health). The
-# target is 85% — TODO subir a 85 a medida que crezca la lógica de negocio.
-fail_under = 40
+# Fase 1: the order-create flow (domain + use cases + mappers + HTTP) is fully
+# tested, lifting real coverage to ~88%. Gate raised from the post-scaffold
+# floor (40) to 85. Coverage is deterministic (integration tests use a SQLite
+# override + spy publisher, no infra), so CI matches local. Remaining gaps are
+# Fase 2 paths: the inventory-results consumer, repository.update (confirm/
+# reject) and the real aio-pika publisher (needs a broker).
+fail_under = 85

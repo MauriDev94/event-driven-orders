@@ -1,9 +1,9 @@
+from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, Field
 
-# SCAFFOLD: request/response contracts for the orders HTTP API.
-# The POST /orders endpoint that uses them is implemented in Phase 1.
+# Request/response contracts for the orders HTTP API.
 
 
 class OrderLineRequest(BaseModel):
@@ -17,6 +17,18 @@ class CreateOrderRequest(BaseModel):
     lines: list[OrderLineRequest] = Field(..., min_length=1)
 
 
-class CreateOrderResponse(BaseModel):
-    order_id: str
+class OrderLineResponse(BaseModel):
+    product_id: str
+    quantity: int
+    unit_price: Decimal
+
+
+class OrderResponse(BaseModel):
+    id: str
+    customer_id: str
     status: str
+    lines: list[OrderLineResponse]
+    total_amount: Decimal
+    rejection_reason: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
