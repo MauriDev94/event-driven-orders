@@ -3,7 +3,7 @@
 > Sistema de procesamiento de órdenes basado en eventos — microservicios asíncronos con **RabbitMQ**.
 > Portfolio project para demostrar sistemas distribuidos, mensajería y Clean Architecture.
 
-🚧 **Work in progress** — Fase 1 (`order-service`: crear orden + publicar `OrderCreated`) ✅ completada.
+🚧 **Work in progress** — Fase 2 (`inventory-service`: consumir `OrderCreated`, reservar stock con atomicidad + idempotencia) ✅ completada.
 
 ---
 
@@ -139,6 +139,18 @@ cd services/order-service && pytest -q --cov=app
 > El venv tiene que estar activado: los targets `lint`/`test`/`format` usan
 > `ruff`/`mypy`/`pytest` directamente desde el venv.
 
+#### Tests de integración del `inventory-service` (Fase 2)
+
+Los tests de integración del `inventory-service` corren contra **PostgreSQL real** — SQLite no tiene `FOR UPDATE` ni row-level locking:
+
+- **Local**: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` via `testcontainers-python`. Requiere Docker corriendo. El container arranca la primera vez (~2 min), las siguientes ejecuciones dentro de la misma sesión son rápidas.
+- **CI**: el job `tests-db` ya levanta un service container Postgres 16; el conftest detecta `CI=true` y usa las `db_*` env vars directamente sin testcontainers.
+
+```bash
+# Docker debe estar corriendo para levantar testcontainers:
+cd services/inventory-service && pytest -q --cov=app
+```
+
 ## CI/CD
 
 GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
@@ -166,6 +178,28 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 - **database-per-service:** `order-service` y `inventory-service` tienen cada uno su Postgres; `notification-service` no tiene DB en Fase 0.
 - **Deps por servicio:** `requirements.txt` (runtime, usado por el Dockerfile) + `requirements-dev.txt` (pytest/ruff) + `pyproject.toml` (config de ruff y pytest). Mismo patrón que el proyecto Monolith de referencia.
 
+## Decisiones de arquitectura (Fase 2)
+
+- **Idempotencia vía tabla `processed_events`.** RabbitMQ es *at-least-once*: el mismo `OrderCreated` puede llegar dos veces. El `event_id` se registra dentro de la **misma transacción** que los decrementos de stock con `INSERT ... ON CONFLICT DO NOTHING`. Si ya existía → `rowcount == 0` → el use case hace ACK sin re-procesar y sin re-publicar. Rechazos también registran su `event_id`, así que un redelivery de un pedido rechazado tampoco republica el `StockRejected`.
+
+- **Reserva atómica anti race-condition.**  
+  ```sql
+  UPDATE products
+  SET    available_quantity = available_quantity - :qty
+  WHERE  sku = :sku AND available_quantity >= :qty
+  ```
+  Postgres evalúa el `WHERE` con row-level locking: dos transacciones concurrentes para el mismo SKU se serializan. Si `rowcount == 0` → stock insuficiente. Además, un `SAVEPOINT reserve_all` envuelve todos los decrementos (all-or-nothing): si cualquier línea falla, se hace `ROLLBACK TO SAVEPOINT` y el UoW puede aún hacer commit del `event_id` (para evitar que la delivery se repita eternamente).
+
+- **Unit of Work (UoW) como contrato de transacción.** `register_event` + `reserve_all` comparten la misma sesión SQLAlchemy. El use case hace `uow.commit()` después de ambas operaciones: el `event_id` y los decrementos de stock commitean juntos. Si el broker falla *después* del commit, la orden ya está reservada pero `StockReserved` no se publicó — la misma ventana dual-write que en la Fase 1 (publish-after-commit, MVP). El endurecimiento es un outbox transaccional (Fase posterior).
+
+- **Tests con PostgreSQL real (testcontainers).** SQLite no tiene `FOR UPDATE` ni row-level locking reales, lo que haría pasar los tests de race-condition sin probar nada (falsa confianza). Los tests de integración usan `testcontainers[postgres]` local y el service container de CI. El conftest detecta el entorno automáticamente: si `CI=true` → usa las `db_*` env vars del job; si no → lanza `PostgresContainer("postgres:16-alpine")`.
+
+- **Migración Alembic + seed de productos.** La migración `a1b2c3d4e5f6` crea `products` + `processed_events` e inserta 5 productos con stock inicial (SKU-001..005) para poder probar el flujo end-to-end sin datos manuales. El Dockerfile corre `alembic upgrade head` antes de `uvicorn`.
+
+- **Consumer como adapter puro (capa presentation).** `build_order_created_handler` es una factory que recibe un `ReserveStock` ya construido y retorna el coroutine de aio-pika. Cero lógica de negocio en el consumer: deserializa, construye `ReserveStockParams`, invoca el use case, y ACK. Testeable sin broker real.
+
+---
+
 ## Decisiones de arquitectura (Fase 1)
 
 - **Use case asíncrono (`AsyncUseCase`).** El puerto `EventPublisher.publish` es `async` (aio-pika), así que `CreateOrder.execute` tiene que poder `await`. Se añadió una base `AsyncUseCase` en `common/` separada de la `UseCase` síncrona para que el límite sync/async sea explícito a nivel de tipos. `GetOrder` queda síncrono.
@@ -188,7 +222,7 @@ Idempotency keys · Dead-letter queues (DLQ) · Retries con backoff · Eventual 
 - [x] **Fase 0** — Scaffold + `docker-compose` (RabbitMQ + Postgres + Mailhog)
 - [x] **Fase 0.5** — CI/CD (GitHub Actions), plantillas de GitHub y venv de desarrollo
 - [x] **Fase 1** — `order-service`: POST /orders + GET /orders/{id} + publica `OrderCreated` (Alembic, cobertura ~88%)
-- [ ] Fase 2 — `inventory-service`: consume, reserva stock, idempotencia
+- [x] **Fase 2** — `inventory-service`: consume `OrderCreated`, reserva atómica (anti race-condition), idempotencia (Alembic + seed, cobertura ~84%)
 - [ ] Fase 3 — `order-service` consume resultado → confirma/rechaza
 - [ ] Fase 4 — `notification-service`: consume → email
 - [ ] Fase 5 — DLQ + retries con backoff

@@ -8,6 +8,11 @@ select = ["E", "F", "I", "B", "UP"]
 # Generic[Input, Output] base on UseCase (PEP 695 type params not adopted yet).
 ignore = ["E501", "UP046"]
 
+[tool.ruff.lint.per-file-ignores]
+# Alembic env.py resolves the DB URL before importing app models — those imports
+# are intentionally below module-level code, so E402 is expected here.
+"app/core/data/source/local/alembic/env.py" = ["E402"]
+
 [tool.pytest.ini_options]
 # `.` makes the local `app` package importable; `../..` makes the repo-root
 # `shared` package importable when running tests from this service folder.
@@ -38,12 +43,27 @@ disable_error_code = ["arg-type"]
 module = "app.core.messaging.connection"
 disable_error_code = ["assignment"]
 
+[[tool.mypy.overrides]]
+# Alembic's env.py is generated boilerplate; the DB URL resolved from env vars
+# is seen as str | None by mypy even though it is always set at runtime.
+module = "app.core.data.source.local.alembic.env"
+ignore_errors = true
+
+[[tool.mypy.overrides]]
+# CursorResult is the runtime type returned by session.execute() for DML
+# statements; SQLAlchemy stubs type it as Result[Any] which lacks .rowcount.
+# The type: ignore comments on those lines are the precise fix; this override
+# silences the remaining attribute-level false positive from the stubs.
+module = "app.features.inventory.infrastructure.persistence.sqlalchemy_inventory_repository"
+disable_error_code = ["attr-defined"]
+
 [tool.coverage.run]
 source = ["app"]
 omit = ["*/__init__.py", "tests/*"]
 
 [tool.coverage.report]
 show_missing = true
-# Post-scaffold floor: real coverage is ~46% (mostly domain + health). The
-# target is 85% — TODO subir a 85 a medida que crezca la lógica de negocio.
-fail_under = 40
+# Fase 2: full use-case + repository + consumer coverage. Real coverage ~84%.
+# Gate at 80 leaves a margin for the uncovered lines (aio-pika publisher,
+# DI wiring, lifespan broker path) that require a real broker to exercise.
+fail_under = 80
