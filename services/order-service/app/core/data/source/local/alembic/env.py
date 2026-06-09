@@ -30,7 +30,10 @@ if database_url.startswith("postgres://"):
 from app.core.data.source.local.sql_alchemy_base import SqlAlchemyBase
 
 # Import the models so their tables register on the metadata for autogenerate.
-from app.features.orders.infrastructure.models import order_model  # noqa: F401
+from app.features.orders.infrastructure.models import (
+    order_model,  # noqa: F401
+    processed_event_model,  # noqa: F401
+)
 
 target_metadata = SqlAlchemyBase.metadata
 
