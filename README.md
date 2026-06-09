@@ -223,7 +223,7 @@ Idempotency keys · Dead-letter queues (DLQ) · Retries con backoff · Eventual 
 - [x] **Fase 0.5** — CI/CD (GitHub Actions), plantillas de GitHub y venv de desarrollo
 - [x] **Fase 1** — `order-service`: POST /orders + GET /orders/{id} + publica `OrderCreated` (Alembic, cobertura ~88%)
 - [x] **Fase 2** — `inventory-service`: consume `OrderCreated`, reserva atómica (anti race-condition), idempotencia (Alembic + seed, cobertura ~84%)
-- [ ] Fase 3 — `order-service` consume resultado → confirma/rechaza
+- [x] **Fase 3** — `order-service`: consume `StockReserved`/`StockRejected` → `ConfirmOrder`/`RejectOrder`, idempotencia (UoW + `processed_events`), publica `OrderConfirmed`/`OrderRejected`, retrofit a Postgres real en tests (cobertura ~91%)
 - [ ] Fase 4 — `notification-service`: consume → email
 - [ ] Fase 5 — DLQ + retries con backoff
 - [ ] Fase 6 — README final + tests e2e

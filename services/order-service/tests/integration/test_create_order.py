@@ -24,10 +24,10 @@ def test_should_return_201_with_a_pending_order_when_creating(api_client) -> Non
     assert body["customer_id"] == "customer-1"
 
 
-def test_should_persist_the_order_when_creating(api_client, db_session_factory) -> None:
+def test_should_persist_the_order_when_creating(api_client, session_factory) -> None:
     api_client.post("/v1/orders", json=_VALID_BODY)
 
-    session = db_session_factory()
+    session = session_factory()
     try:
         orders = session.query(OrderModel).all()
         assert len(orders) == 1

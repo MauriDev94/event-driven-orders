@@ -5,9 +5,26 @@ application concern. The domain stays free of the wire contract, and the
 broker/aio-pika detail stays behind the EventPublisher port.
 """
 
-from shared.contracts.order_events import OrderCreated, OrderItem
+from shared.contracts.order_events import OrderConfirmed, OrderCreated, OrderItem, OrderRejected
 
 from app.features.orders.domain.entities.order import Order
+
+
+def map_order_to_order_confirmed(
+    order_id: str, customer_id: str, correlation_id: str
+) -> OrderConfirmed:
+    return OrderConfirmed(correlation_id=correlation_id, order_id=order_id, customer_id=customer_id)
+
+
+def map_order_to_order_rejected(
+    order_id: str, customer_id: str, correlation_id: str, reason: str
+) -> OrderRejected:
+    return OrderRejected(
+        correlation_id=correlation_id,
+        order_id=order_id,
+        customer_id=customer_id,
+        reason=reason,
+    )
 
 
 def map_order_to_order_created(order: Order) -> OrderCreated:
