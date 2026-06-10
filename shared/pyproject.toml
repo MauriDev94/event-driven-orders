@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+# ".." makes the repo-root importable so `shared.*` resolves when running
+# pytest from inside this directory (mirrors each service's pyproject).
+pythonpath = [".."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = [
+    "unit: pure logic tests with no I/O",
+]
