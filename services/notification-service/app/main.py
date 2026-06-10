@@ -2,12 +2,16 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from shared.messaging.retry_dispatcher import wrap_with_retry
 
 from app.core.exceptions.error_handling import register_exception_handlers
 from app.core.messaging.connection import RabbitMQConnection
 from app.core.messaging.topology import ORDER_OUTCOMES_QUEUE, declare_topology
 from app.core.providers.env_config import get_env_config
 from app.features.notifications.di.dependencies import get_send_order_notification_use_case
+from app.features.notifications.infrastructure.dedup.in_memory_event_deduplicator import (
+    InMemoryEventDeduplicator,
+)
 from app.features.notifications.presentation.consumers.order_events_consumer import (
     build_order_events_handler,
 )
@@ -33,10 +37,14 @@ async def lifespan(app: FastAPI):
         await declare_topology(broker.channel)
 
         use_case = get_send_order_notification_use_case()
-        handler = build_order_events_handler(use_case)
+        deduplicator = InMemoryEventDeduplicator()
+        handler = build_order_events_handler(use_case, deduplicator)
 
+        resilient_handler = wrap_with_retry(
+            handler, channel=broker.channel, main_queue_name=ORDER_OUTCOMES_QUEUE
+        )
         queue = await broker.channel.get_queue(ORDER_OUTCOMES_QUEUE)
-        await queue.consume(handler)
+        await queue.consume(resilient_handler)
         logger.info("notification-service connected to broker and consuming order outcomes")
     except Exception as exc:  # noqa: BLE001 - startup must stay resilient
         logger.warning("notification-service could not connect to broker: %s", exc)
