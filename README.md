@@ -163,7 +163,7 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 | `tests` (notification) | `pytest` con cobertura, sin DB |
 
 - **Python 3.12** con cache de `pip` por servicio. `actions/checkout@v4`, `actions/setup-python@v5`, `actions/upload-artifact@v4`.
-- **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` está en **85** (cobertura real ~88% tras la Fase 1); `inventory` y `notification` siguen en **40** (piso post-scaffold) hasta que crezca su lógica.
+- **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` y `notification-service` están en **85** (cobertura real ~91% y ~93% respectivamente); `inventory` sigue en **40** (piso post-scaffold) hasta que crezca su lógica.
 - El `coverage.xml` de cada servicio se sube como artefacto (`coverage-<servicio>`).
 - **Secret opcional `CI_DB_PASSWORD`:** password del Postgres de CI. Si no está seteado, el workflow usa un valor descartable para que el CI quede verde sin configuración manual.
 
@@ -198,6 +198,16 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 
 - **Consumer como adapter puro (capa presentation).** `build_order_created_handler` es una factory que recibe un `ReserveStock` ya construido y retorna el coroutine de aio-pika. Cero lógica de negocio en el consumer: deserializa, construye `ReserveStockParams`, invoca el use case, y ACK. Testeable sin broker real.
 
+## Decisiones de arquitectura (Fase 4)
+
+- **Sin idempotencia persistente (limitación documentada del MVP).** A diferencia de `order-service` (Fase 3, tabla `processed_events`), `notification-service` no tiene base de datos por diseño — es un consumer puro que solo habla con SMTP. RabbitMQ es *at-least-once*, así que un redelivery de `OrderConfirmed`/`OrderRejected` (p. ej. si el proceso muere después del `send()` pero antes del `ack()`) puede reenviar el mismo email al cliente. Para el MVP se acepta esta limitación: un email duplicado es molesto pero no corrompe estado de negocio (a diferencia de un doble decremento de stock). **Mitigación futura (Fase 5+):** tabla `processed_events` con `INSERT ... ON CONFLICT DO NOTHING` sobre `event_id` (mismo patrón de Fase 2/3), o dedup en el `EmailSender` a nivel de adapter.
+
+- **Destinatario derivado del `customer_id` (limitación documentada del MVP).** Los eventos `OrderConfirmed`/`OrderRejected` (`shared/contracts/order_events.py`) llevan `customer_id`, no un email. El MVP no tiene un servicio/directorio de clientes que resuelva `customer_id → email`, así que el mapper (`application/mappers/order_event_mapper.py`) deriva un placeholder determinístico `{customer_id}@example.com`. En un sistema real esto sería una consulta a un customer-service o a una tabla de perfiles.
+
+- **Patrón factory del consumer (igual que Fases 2/3).** `build_order_events_handler(use_case)` cierra sobre `SendOrderNotification` ya wireado y retorna el coroutine de aio-pika. Deserializa, dispatch por `event_type` (`order.confirmed` / `order.rejected`), mapea a params, ejecuta el use case y hace ACK. `event_type` desconocido → NACK sin requeue (dead-letter). Testeable sin broker real (mensajes fake) y sin SMTP real (`EmailSender` spy/fake).
+
+- **Puerto `EmailSender`, no `smtplib` directo.** El use case `SendOrderNotification` depende del contrato `application/contracts/email_sender.py`; `SmtpEmailSender` (target Mailhog) vive en `infrastructure/email/`. Los tests de integración del adapter mockean `smtplib.SMTP` — nunca abren un socket real.
+
 ---
 
 ## Decisiones de arquitectura (Fase 1)
@@ -224,6 +234,6 @@ Idempotency keys · Dead-letter queues (DLQ) · Retries con backoff · Eventual 
 - [x] **Fase 1** — `order-service`: POST /orders + GET /orders/{id} + publica `OrderCreated` (Alembic, cobertura ~88%)
 - [x] **Fase 2** — `inventory-service`: consume `OrderCreated`, reserva atómica (anti race-condition), idempotencia (Alembic + seed, cobertura ~84%)
 - [x] **Fase 3** — `order-service`: consume `StockReserved`/`StockRejected` → `ConfirmOrder`/`RejectOrder`, idempotencia (UoW + `processed_events`), publica `OrderConfirmed`/`OrderRejected`, retrofit a Postgres real en tests (cobertura ~91%)
-- [ ] Fase 4 — `notification-service`: consume → email
+- [x] **Fase 4** — `notification-service`: consume `OrderConfirmed`/`OrderRejected` → email vía `EmailSender` (SMTP/Mailhog), gate de cobertura subido a 85 (cobertura real ~93%)
 - [ ] Fase 5 — DLQ + retries con backoff
 - [ ] Fase 6 — README final + tests e2e

@@ -44,6 +44,8 @@ omit = ["*/__init__.py", "tests/*"]
 
 [tool.coverage.report]
 show_missing = true
-# Post-scaffold floor: real coverage is ~49% (mostly domain + health). The
-# target is 85% — TODO subir a 85 a medida que crezca la lógica de negocio.
-fail_under = 40
+# Phase 4 raised real coverage to ~92% (use case, mapper, consumer, SMTP
+# adapter, DI and topology all under test). Gate set to 85 to match
+# order-service, leaving headroom for the broker-only paths (connection.py and
+# the consumer-start branch in main.py) that need a live RabbitMQ.
+fail_under = 85
