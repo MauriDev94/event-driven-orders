@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from shared.messaging.retry_dispatcher import wrap_with_retry
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
@@ -48,8 +49,11 @@ async def lifespan(app: FastAPI):
         reject_uc = RejectOrder(SqlAlchemyOrderUnitOfWork(db), publisher)
         handler = build_inventory_result_handler(confirm_uc, reject_uc)
 
+        resilient_handler = wrap_with_retry(
+            handler, channel=broker.channel, main_queue_name=ORDER_RESULTS_QUEUE
+        )
         queue = await broker.channel.get_queue(ORDER_RESULTS_QUEUE)
-        await queue.consume(handler)
+        await queue.consume(resilient_handler)
         logger.info("order-service connected to broker and consuming inventory results")
     except Exception as exc:  # noqa: BLE001 - startup must stay resilient
         logger.warning("order-service could not connect to broker: %s", exc)
