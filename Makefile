@@ -51,6 +51,8 @@ test: ## Run every service's test suite with coverage (enforces the gate)
 		echo "==> testing $$svc"; \
 		(cd services/$$svc && python -m pytest -q --cov=app --cov-report=term-missing) || exit 1; \
 	done
+	@echo "==> testing shared"
+	@(cd shared && python -m pytest -q) || exit 1
 
 lint: ## Lint + format check + type check every service and lint the shared package
 	@for svc in $(SERVICES); do \

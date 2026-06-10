@@ -16,6 +16,9 @@ from app.features.notifications.application.usecases.send_order_notification_use
     SendOrderNotification,
 )
 from app.features.notifications.domain.entities.notification import Notification
+from app.features.notifications.infrastructure.dedup.in_memory_event_deduplicator import (
+    InMemoryEventDeduplicator,
+)
 from app.features.notifications.presentation.consumers.order_events_consumer import (
     build_order_events_handler,
 )
@@ -37,9 +40,9 @@ def _fake_message(event) -> AsyncMock:
     return msg
 
 
-def _build_handler(spy: SpyEmailSender):
+def _build_handler(spy: SpyEmailSender, deduplicator: InMemoryEventDeduplicator | None = None):
     use_case = SendOrderNotification(email_sender=spy)  # type: ignore[arg-type]
-    return build_order_events_handler(use_case)
+    return build_order_events_handler(use_case, deduplicator or InMemoryEventDeduplicator())
 
 
 # ---------------------------------------------------------------------------
@@ -106,3 +109,27 @@ async def test_should_dead_letter_unknown_event_type() -> None:
     assert spy.sent == []
     msg.nack.assert_awaited_once_with(requeue=False)
     msg.ack.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Idempotency: redelivery of an already-handled event_id
+# ---------------------------------------------------------------------------
+
+
+async def test_should_not_resend_email_on_duplicate_order_confirmed_event() -> None:
+    """A redelivered OrderConfirmed (same event_id, e.g. after a transient
+    retry) must ACK without sending a second email."""
+    spy = SpyEmailSender()
+    dedup = InMemoryEventDeduplicator()
+    handler = _build_handler(spy, dedup)
+    event = OrderConfirmed(order_id="order-123", customer_id="cust-7", correlation_id="order-123")
+
+    await handler(_fake_message(event))
+    assert len(spy.sent) == 1
+
+    dup_msg = _fake_message(event)
+    await handler(dup_msg)
+
+    assert len(spy.sent) == 1
+    dup_msg.ack.assert_awaited_once()
+    dup_msg.nack.assert_not_awaited()

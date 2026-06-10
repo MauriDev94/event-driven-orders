@@ -4,18 +4,21 @@ Presentation-layer entry point — the broker equivalent of an HTTP route.
 Transport concerns only:
 
 1. Deserialize the raw message body; dispatch on ``event_type``.
-2. Map the event to use-case params and invoke ``SendOrderNotification``.
-3. ACK on success; NACK (dead-letter) unknown event types.
+2. Skip already-seen ``event_id`` (idempotency, see below).
+3. Map the event to use-case params and invoke ``SendOrderNotification``.
+4. ACK on success; NACK (dead-letter) unknown event types.
 
 ``build_order_events_handler`` is a factory that closes over the fully-wired
-``SendOrderNotification`` instance, returning the coroutine expected by
-aio-pika's ``queue.consume``. This makes the handler unit-testable without a
-real broker or SMTP server.
+``SendOrderNotification`` instance and an ``InMemoryEventDeduplicator``,
+returning the coroutine expected by aio-pika's ``queue.consume``. This makes
+the handler unit-testable without a real broker or SMTP server.
 
-Idempotency note: this service has no database by design, so there is NO
-persistent dedup. RabbitMQ is at-least-once, so a redelivery may resend an
-email. This is a documented MVP limitation (see README); hardening (dedup by
-event_id / processed_events table, DLQ + retries) is Phase 5.
+Idempotency note (Phase 5): this service has no database by design, so
+duplicates are tracked with an in-memory, bounded ``event_id`` set instead of
+a ``processed_events`` table. This covers redeliveries within a process
+lifetime (the common case once retries are introduced); a redelivery shortly
+after a restart can still send a duplicate email — documented limitation,
+see README.
 """
 
 import json
@@ -32,23 +35,36 @@ from app.features.notifications.application.mappers.order_event_mapper import (
 from app.features.notifications.application.usecases.send_order_notification_use_case import (
     SendOrderNotification,
 )
+from app.features.notifications.infrastructure.dedup.in_memory_event_deduplicator import (
+    InMemoryEventDeduplicator,
+)
 
 logger = logging.getLogger(__name__)
 
 MessageHandler = Callable[[aio_pika.abc.AbstractIncomingMessage], Awaitable[None]]
 
 
-def build_order_events_handler(use_case: SendOrderNotification) -> MessageHandler:
+def build_order_events_handler(
+    use_case: SendOrderNotification,
+    deduplicator: InMemoryEventDeduplicator,
+) -> MessageHandler:
     """Return a coroutine that routes a single order-outcome message.
 
     ``order.confirmed`` → confirmation email.
     ``order.rejected``  → rejection email (with the reason).
+    Duplicate ``event_id`` (already seen) → ACK without resending.
     Unknown event_type  → NACK to the dead-letter queue.
     """
 
     async def handle(message: aio_pika.abc.AbstractIncomingMessage) -> None:
         body = json.loads(message.body)
         event_type = body.get("event_type")
+        event_id = body.get("event_id")
+
+        if event_id is not None and deduplicator.seen(event_id):
+            logger.info("duplicate order event %s — skipped", event_id)
+            await message.ack()
+            return
 
         if event_type == "order.confirmed":
             confirmed = OrderConfirmed.model_validate(body)
@@ -63,6 +79,8 @@ def build_order_events_handler(use_case: SendOrderNotification) -> MessageHandle
             await message.nack(requeue=False)
             return
 
+        if event_id is not None:
+            deduplicator.mark_seen(event_id)
         await message.ack()
 
     return handle
