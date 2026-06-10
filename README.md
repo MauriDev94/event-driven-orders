@@ -208,6 +208,22 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 
 - **Puerto `EmailSender`, no `smtplib` directo.** El use case `SendOrderNotification` depende del contrato `application/contracts/email_sender.py`; `SmtpEmailSender` (target Mailhog) vive en `infrastructure/email/`. Los tests de integración del adapter mockean `smtplib.SMTP` — nunca abren un socket real.
 
+## Decisiones de arquitectura (Fase 5)
+
+- **Retry-with-backoff + DLQ compartidos en `shared/messaging/`.** `retry_policy.py` (clasificación de errores + decisión de retry/DLQ, puro y testeado en `unit`) y `retry_dispatcher.py` (`wrap_with_retry`, side-effecting: ack/nack/republish, testeado en `unit` con AsyncMock) se implementaron una sola vez y se reusan en los 3 servicios. `wrap_with_retry(handler, channel=..., main_queue_name=...)` envuelve el handler de cada consumer en su `lifespan`.
+
+- **Backoff de 3 etapas vía colas TTL + DLX (sin plugins).** Por cada cola principal `<queue>` se declaran 3 colas de retry: `<queue>.retry-5s` (TTL 5s), `<queue>.retry-30s` (TTL 30s) y `<queue>.retry-2m` (TTL 120s). Cada una tiene `x-dead-letter-exchange: ""` + `x-dead-letter-routing-key: <queue>`, así que al expirar el TTL el mensaje vuelve solo (vía exchange por defecto, ruteo por nombre de cola — sin bindings) a la cola principal para reintentarse. `MAX_RETRIES = 3` (= cantidad de etapas, `shared/messaging/retry_policy.py`).
+
+- **Contador de intentos en header `x-retry-count`.** El dispatcher lee `x-retry-count` del mensaje (default 0). Si el handler falla: clasifica la excepción → si es `TRANSIENT` y `retry_count < MAX_RETRIES`, republica a `<queue>.retry-{etapa correspondiente}` con `x-retry-count` incrementado y hace ACK del mensaje original (la cola de retry es la que reintroduce el mensaje tras el TTL). Si es `PERMANENT` o ya se agotaron los 3 reintentos → `nack(requeue=False)`, lo que lo manda directo a `<queue>.dlq` vía el `x-dead-letter-exchange` de la cola principal.
+
+- **Clasificación transient vs permanent (`classify_exception`).** `pydantic.ValidationError`, `json.JSONDecodeError` y `ValueError` (payload malformado o `event_type`/outcome desconocido) son **PERMANENT** → DLQ inmediato, sin gastar reintentos (no tiene sentido reintentar un mensaje que siempre va a fallar igual). Cualquier otra excepción (p. ej. `RuntimeError` por caída de Postgres o de SMTP) es **TRANSIENT** → sigue el backoff.
+
+- **Fix de un bug de Fases 1-4: DLQ "fantasma".** Las 3 colas principales declaraban `x-dead-letter-exchange: "orders.dlx"`, un exchange topic que **nunca se declaraba ni bindeaba** a la `.dlq` correspondiente — un exchange topic sin binding matcheante descarta el mensaje silenciosamente (no es como el exchange por defecto). Resultado: cualquier `nack(requeue=False)` previo a Fase 5 perdía el mensaje para siempre, sin error visible. Fase 5 lo corrige usando el exchange por defecto (`""`) + `x-dead-letter-routing-key: <queue>.dlq` (ruteo por nombre de cola, no requiere binding). Cubierto por `tests/integration/test_topology.py` en los 3 servicios.
+
+- **Idempotencia hace que los reintentos sean seguros.** `order-service` e `inventory-service` ya tenían `processed_events` (Fase 2/3) — un redelivery tras un retry no duplica efectos de negocio. `notification-service` no tiene base de datos (Fase 4); Fase 5 agrega `InMemoryEventDeduplicator` (`infrastructure/dedup/`, set acotado FIFO de `event_id` vistos) para que un redelivery dentro del mismo proceso no reenvíe el email. Limitación documentada: un redelivery justo después de un *restart* del proceso puede igual reenviar un email duplicado (el dedup en memoria no sobrevive reinicios) — mitigación completa requeriría `processed_events` persistente, fuera de alcance del MVP.
+
+- **Inspeccionar las DLQ en RabbitMQ Management UI** (`http://localhost:15672`, user/pass `guest`/`guest`): pestaña *Queues*, buscar `<service>.<queue>.dlq` (p. ej. `order-service.inventory-results.dlq`, `inventory-service.order-created.dlq`, `notification-service.order-outcomes.dlq`). El botón *Get messages* permite ver el body + headers (`x-retry-count`, `x-death`) del mensaje muerto. Las colas de retry (`<queue>.retry-5s/30s/2m`) muestran mensajes "en tránsito" mientras esperan su TTL.
+
 ---
 
 ## Decisiones de arquitectura (Fase 1)
@@ -235,5 +251,5 @@ Idempotency keys · Dead-letter queues (DLQ) · Retries con backoff · Eventual 
 - [x] **Fase 2** — `inventory-service`: consume `OrderCreated`, reserva atómica (anti race-condition), idempotencia (Alembic + seed, cobertura ~84%)
 - [x] **Fase 3** — `order-service`: consume `StockReserved`/`StockRejected` → `ConfirmOrder`/`RejectOrder`, idempotencia (UoW + `processed_events`), publica `OrderConfirmed`/`OrderRejected`, retrofit a Postgres real en tests (cobertura ~91%)
 - [x] **Fase 4** — `notification-service`: consume `OrderConfirmed`/`OrderRejected` → email vía `EmailSender` (SMTP/Mailhog), gate de cobertura subido a 85 (cobertura real ~93%)
-- [ ] Fase 5 — DLQ + retries con backoff
+- [x] **Fase 5** — DLQ + retries con backoff (3 etapas: 5s/30s/2m, `x-retry-count`, fix de DLQ "fantasma" Fases 1-4, dedup en memoria en `notification-service`)
 - [ ] Fase 6 — README final + tests e2e
