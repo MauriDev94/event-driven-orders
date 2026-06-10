@@ -5,23 +5,39 @@ from fastapi import FastAPI
 
 from app.core.exceptions.error_handling import register_exception_handlers
 from app.core.messaging.connection import RabbitMQConnection
+from app.core.messaging.topology import ORDER_OUTCOMES_QUEUE, declare_topology
 from app.core.providers.env_config import get_env_config
+from app.features.notifications.di.dependencies import get_send_order_notification_use_case
+from app.features.notifications.presentation.consumers.order_events_consumer import (
+    build_order_events_handler,
+)
 
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Worker lifespan: open the broker connection and (in later phases) start
-    consuming order outcome events to send emails. This service owns no
-    database — it only reacts to events and talks to SMTP (Mailhog).
+    """Worker lifespan: open the broker connection, declare topology and start
+    consuming order-outcome events (OrderConfirmed / OrderRejected) to send
+    customer emails. This service owns no database — it only reacts to events
+    and talks to SMTP (Mailhog).
+
+    A failed broker connection must NOT crash the app: ``/health`` reports the
+    broker as unhealthy instead. Topology declaration is idempotent on
+    RabbitMQ, so it is safe to run on every startup.
     """
     config = get_env_config()
     broker = RabbitMQConnection(config.rabbitmq_url)
     try:
         await broker.connect()
-        logger.info("notification-service connected to broker")
-        # Phase 4: declare topology and start the order-events consumer here.
+        await declare_topology(broker.channel)
+
+        use_case = get_send_order_notification_use_case()
+        handler = build_order_events_handler(use_case)
+
+        queue = await broker.channel.get_queue(ORDER_OUTCOMES_QUEUE)
+        await queue.consume(handler)
+        logger.info("notification-service connected to broker and consuming order outcomes")
     except Exception as exc:  # noqa: BLE001 - startup must stay resilient
         logger.warning("notification-service could not connect to broker: %s", exc)
     app.state.broker = broker
