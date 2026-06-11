@@ -1,9 +1,9 @@
 from typing import Annotated
 
 from fastapi import Depends, Request
+from shared.messaging.connection import RabbitMQConnection
 from sqlalchemy.orm import Session
 
-from app.core.messaging.connection import RabbitMQConnection
 from app.core.providers.db import get_db_session
 from app.features.orders.application.contracts.event_publisher import EventPublisher
 from app.features.orders.application.contracts.order_repository import OrderRepository

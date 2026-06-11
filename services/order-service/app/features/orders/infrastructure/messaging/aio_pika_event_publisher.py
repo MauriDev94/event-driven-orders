@@ -1,7 +1,7 @@
 import aio_pika
 from shared.contracts.base_event import BaseEvent
+from shared.messaging.connection import RabbitMQConnection
 
-from app.core.messaging.connection import RabbitMQConnection
 from app.core.messaging.topology import ORDERS_EXCHANGE
 from app.features.orders.application.contracts.event_publisher import EventPublisher
 

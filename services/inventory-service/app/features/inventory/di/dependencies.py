@@ -1,9 +1,9 @@
 from typing import Annotated
 
 from fastapi import Depends, Request
+from shared.messaging.connection import RabbitMQConnection
 from sqlalchemy.orm import sessionmaker
 
-from app.core.messaging.connection import RabbitMQConnection
 from app.features.inventory.application.contracts.event_publisher import EventPublisher
 from app.features.inventory.application.contracts.unit_of_work import UnitOfWork
 from app.features.inventory.application.usecases.reserve_stock_use_case import ReserveStock
