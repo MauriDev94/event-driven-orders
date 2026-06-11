@@ -1,61 +1,119 @@
 # Event-Driven Orders
 
-> Sistema de procesamiento de órdenes basado en eventos — microservicios asíncronos con **RabbitMQ**.
-> Portfolio project para demostrar sistemas distribuidos, mensajería y Clean Architecture.
+> Sistema de procesamiento de órdenes basado en eventos — microservicios asíncronos en **Python 3.12 / FastAPI** comunicados por **RabbitMQ**, con **Clean Architecture + DDD**.
+> Portfolio project: idempotencia, atomicidad anti race-condition, DLQ + retries con backoff, observabilidad (logging JSON + correlation IDs) y tests e2e contra infraestructura real.
 
-🚧 **Work in progress** — Fase 6 (hardening de observabilidad: logging JSON + correlation IDs end-to-end) ✅ completada.
+[![CI](https://img.shields.io/badge/CI-passing-brightgreen)](.github/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-async-009688)](https://fastapi.tiangolo.com/)
+[![Coverage order-service](https://img.shields.io/badge/coverage%20order--service-91%25-brightgreen)](#testing)
+[![Coverage inventory-service](https://img.shields.io/badge/coverage%20inventory--service-85%25-brightgreen)](#testing)
+[![Coverage notification-service](https://img.shields.io/badge/coverage%20notification--service-92%25-brightgreen)](#testing)
 
 ---
 
 ## Qué es
 
-Sistema de e-commerce dividido en **3 microservicios** que se comunican por **eventos** a través de un message broker (RabbitMQ), demostrando comunicación asíncrona, idempotencia, dead-letter queues y eventual consistency.
+Sistema de e-commerce dividido en **3 microservicios** que se comunican exclusivamente por **eventos** a través de un message broker (RabbitMQ), demostrando comunicación asíncrona, idempotencia, dead-letter queues, retries con backoff y eventual consistency.
 
 ```
    [Cliente]
-       │ POST /orders
+       │ POST /v1/orders
        ▼
-┌──────────────┐   OrderCreated     ┌──────────────────┐
-│ order-service│ ──────────────────▶│ inventory-service│
-│  (FastAPI)   │◀────────────────── │  reserva stock   │
-└──────┬───────┘  StockReserved/    └──────────────────┘
-       │          StockRejected
-       │ OrderConfirmed / OrderRejected
+┌──────────────┐   order.created     ┌──────────────────┐
+│ order-service│ ───────────────────▶│ inventory-service│
+│  (FastAPI)   │◀─────────────────── │  reserva stock    │
+└──────┬───────┘  stock.reserved /   └──────────────────┘
+       │          stock.rejected
+       │ order.confirmed / order.rejected
        ▼
-┌────────────────────┐
-│ notification-service│  envía email (Mailhog)
-└────────────────────┘
+┌─────────────────────┐
+│ notification-service │  envía email (Mailhog)
+└─────────────────────┘
+```
+
+```mermaid
+sequenceDiagram
+    participant C as Cliente
+    participant O as order-service
+    participant Q as RabbitMQ
+    participant I as inventory-service
+    participant N as notification-service
+    participant M as Mailhog
+
+    C->>O: POST /v1/orders
+    O->>O: persiste orden (pending)
+    O->>Q: order.created
+    Q->>I: order.created
+    I->>I: reserva stock (atómico, idempotente)
+    I->>Q: stock.reserved | stock.rejected
+    Q->>O: stock.reserved | stock.rejected
+    O->>O: confirma/rechaza orden (idempotente)
+    O->>Q: order.confirmed | order.rejected
+    Q->>N: order.confirmed | order.rejected
+    N->>M: envía email
+    O-->>C: GET /v1/orders/{id} -> confirmed | rejected
 ```
 
 ## Servicios
 
 | Servicio | Tipo | Responsabilidad |
 |---|---|---|
-| `order-service` | FastAPI (REST + consumer) | Crea órdenes, orquesta el ciclo de vida |
-| `inventory-service` | Worker (consumer) | Reserva stock con transacción atómica |
-| `notification-service` | Worker (consumer) | Envía notificaciones por email |
+| `order-service` | FastAPI (REST + consumer) | Crea órdenes, orquesta el ciclo de vida, expone `/v1/orders` |
+| `inventory-service` | Worker (consumer) | Reserva stock con transacción atómica anti race-condition |
+| `notification-service` | Worker (consumer) | Envía notificaciones por email (Mailhog) |
 
 ## Stack
 
-`Python 3.12` · `FastAPI` · `aio-pika` · `RabbitMQ` · `PostgreSQL (database-per-service)` · `Pydantic v2` · `Mailhog` · `Docker Compose` · `pytest`
+| Capa | Tecnología |
+|---|---|
+| Lenguaje | Python 3.12 |
+| Framework HTTP | FastAPI + Uvicorn |
+| Mensajería | RabbitMQ + `aio-pika` |
+| Persistencia | PostgreSQL 16 (database-per-service) + SQLAlchemy + Alembic |
+| Validación / contratos | Pydantic v2 |
+| Email (dev) | Mailhog (SMTP + API de inspección) |
+| Observabilidad | `structlog` (logging JSON) + correlation ID por contexto |
+| Testing | pytest, pytest-asyncio, `testcontainers` (Postgres real), httpx |
+| Lint / types | ruff + mypy |
+| Infra | Docker Compose |
+| CI/CD | GitHub Actions |
 
 ## Arquitectura
 
 Cada servicio aplica **Clean Architecture + DDD** (capas `domain` / `application` / `infrastructure` / `presentation` / `di`), siguiendo el patrón del proyecto [Monolith](https://github.com/MauriDev94/Api_monolith).
 
-- El **broker es un detalle de infraestructura**: los use cases hablan con un puerto `EventPublisher`; la implementación con `aio-pika` vive en `infrastructure/messaging/`.
-- La capa **presentation** incluye tanto adapters HTTP (routers) como **consumers** de mensajería (puntos de entrada por eventos).
-- Los **integration events** (contratos entre servicios) viven en `shared/contracts/`.
+- **El broker es un detalle de infraestructura.** Los use cases hablan con el puerto `EventPublisher` (`application/contracts/`); la implementación con `aio-pika` vive en `infrastructure/messaging/`.
+- **`presentation/` = puntos de entrada (adapters).** En `order-service`: `presentation/http/` (routers + schemas) y `presentation/consumers/` (handlers de eventos). En los workers: solo `presentation/consumers/`.
+- **`shared/contracts/`** es la única fuente de los *integration events* (Pydantic): los servicios no comparten entidades de dominio, solo estos modelos viajan por el broker. Cada servicio mapea entre su dominio y estos contratos.
+- **`shared/messaging/`** y **`shared/observability/`** son infraestructura transversal (retry/DLQ y logging) reusada por los 3 servicios — nunca lógica de negocio.
+- **database-per-service:** `order-service` y `inventory-service` tienen cada uno su Postgres; `notification-service` no tiene DB (consumer puro).
+
+## Patrones demostrados
+
+| Patrón | Dónde | Qué resuelve |
+|---|---|---|
+| **Idempotencia** (`processed_events`) | `order-service`, `inventory-service` | RabbitMQ es *at-least-once*: un evento redelivered no duplica efectos de negocio (`INSERT ... ON CONFLICT DO NOTHING` sobre `event_id`, misma transacción que la lógica de negocio) |
+| **Atomicidad anti race-condition** | `inventory-service` | `UPDATE products SET available_quantity = available_quantity - :qty WHERE sku = :sku AND available_quantity >= :qty` + `SAVEPOINT` por orden (all-or-nothing) — Postgres serializa vía row-level locking |
+| **DLQ + retries con backoff** | `shared/messaging/` (3 servicios) | 3 etapas (5s/30s/2m) vía colas TTL + dead-letter, header `x-retry-count`, clasificación transient/permanent |
+| **Eventual consistency** | flujo completo | La orden pasa por `pending -> confirmed/rejected` de forma asíncrona, sin transacción distribuida |
+| **Correlation ID end-to-end** | HTTP -> eventos -> 3 consumers | `structlog.contextvars` propaga el mismo id desde el `X-Correlation-ID` del request hasta cada log de cada servicio |
+| **Logging estructurado (JSON)** | `shared/observability/` | Toda línea de log (propia o de librerías) sale como JSON filtrable con `jq` |
+| **Database-per-service** | `order-service`, `inventory-service` | Cada servicio es dueño exclusivo de su esquema; integración solo por eventos |
 
 ## Estructura del monorepo
 
 ```
 event-driven-orders/
-├── docker-compose.yml          # RabbitMQ + 2× Postgres + Mailhog + 3 servicios
+├── docker-compose.yml          # RabbitMQ + 2x Postgres + Mailhog + 3 servicios
 ├── .env.example                # variables para docker-compose
-├── Makefile                    # install / up / down / logs / ps / test / lint / format
+├── Makefile                    # install / up / down / logs / ps / test / lint / format / e2e
 ├── .github/                    # CI (ci.yml) + plantillas de PR/issues + CODEOWNERS
-├── shared/contracts/           # integration events (Pydantic): BaseEvent + Order*/Stock*
+├── shared/
+│   ├── contracts/               # integration events (Pydantic): BaseEvent + Order*/Stock*
+│   ├── messaging/                # retry policy + dispatcher (DLQ/backoff), reusado por los 3 servicios
+│   └── observability/            # logging JSON (structlog) + correlation id contextvars
+├── tests/e2e/                   # tests e2e contra el stack real (make e2e)
 └── services/
     ├── order-service/          # FastAPI: REST + consumer (feature: orders)
     ├── inventory-service/      # worker: consumer (feature: inventory)
@@ -83,73 +141,133 @@ make down      # detener
 | Mailhog UI | http://localhost:8025 |
 | Postgres orders / inventory | localhost:5433 / localhost:5434 |
 
-### API del order-service (Fase 1)
+### Catálogo seed (`inventory-service`)
+
+La migración inicial siembra estos productos para poder probar el flujo sin datos manuales:
+
+| SKU | Stock inicial |
+|---|---|
+| `SKU-001` | 100 |
+| `SKU-002` | 50 |
+| `SKU-003` | 25 |
+| `SKU-004` | 10 |
+| `SKU-005` | 5 |
+
+## Cómo probar el flujo end-to-end a mano
+
+Con el stack arriba (`make up`), todo el flujo se dispara con un solo POST.
+
+### Camino feliz (stock suficiente)
 
 ```bash
-# Crear una orden (201 + la orden creada; publica OrderCreated al exchange "orders")
+# bash / curl
 curl -X POST http://localhost:8001/v1/orders \
   -H "Content-Type: application/json" \
-  -d '{"customer_id": "c-1", "lines": [{"product_id": "p-1", "quantity": 2, "unit_price": "10.00"}]}'
-
-# Consultar una orden (200 / 404)
-curl http://localhost:8001/v1/orders/<order_id>
+  -d '{"customer_id": "c-1", "lines": [{"product_id": "SKU-001", "quantity": 1, "unit_price": "10.00"}]}'
 ```
 
-> Las rutas están versionadas bajo `/v1` (el router del scaffold ya fija ese prefijo).
+```powershell
+# PowerShell
+$body = @{
+    customer_id = "c-1"
+    lines = @(@{ product_id = "SKU-001"; quantity = 1; unit_price = "10.00" })
+} | ConvertTo-Json
 
-### Migraciones (Alembic)
+Invoke-RestMethod -Uri http://localhost:8001/v1/orders -Method Post -Body $body -ContentType "application/json"
+```
 
-El esquema del `order-service` se versiona con **Alembic** (mismo patrón que el
-Monolith). En `docker compose up` la migración se aplica sola al arrancar el
-contenedor (`alembic upgrade head` antes de `uvicorn`). En local:
+Tras unos segundos:
 
 ```bash
-cd services/order-service
-alembic upgrade head        # aplica migraciones (usa db_* del entorno / .env)
-alembic history             # ver el historial
-alembic check               # verifica que los modelos == la última migración
+curl http://localhost:8001/v1/orders/<order_id>   # status: "confirmed"
 ```
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8001/v1/orders/<order_id>"   # status: "confirmed"
+```
+
+Y en Mailhog (http://localhost:8025) llega un email "Your order `<order_id>` is confirmed" a `c-1@example.com`.
+
+### Camino de rechazo (stock insuficiente)
+
+Pedí más de lo que hay (`SKU-005` solo tiene 5 unidades):
+
+```bash
+curl -X POST http://localhost:8001/v1/orders \
+  -H "Content-Type: application/json" \
+  -d '{"customer_id": "c-2", "lines": [{"product_id": "SKU-005", "quantity": 999, "unit_price": "10.00"}]}'
+```
+
+```powershell
+$body = @{
+    customer_id = "c-2"
+    lines = @(@{ product_id = "SKU-005"; quantity = 999; unit_price = "10.00" })
+} | ConvertTo-Json
+
+Invoke-RestMethod -Uri http://localhost:8001/v1/orders -Method Post -Body $body -ContentType "application/json"
+```
+
+La orden termina en `status: "rejected"` y llega un email "Your order `<order_id>` was rejected" con el motivo (`insufficient stock for product SKU-005`) a `c-2@example.com`.
+
+### Inspeccionar DLQ y trazas
+
+- **RabbitMQ Management** (`guest`/`guest`): pestaña *Queues*, buscar `<service>.<queue>.dlq` o `.retry-5s/30s/2m`.
+- **Logs por correlation ID**:
+  ```bash
+  docker compose logs order-service inventory-service notification-service --no-color \
+    | grep -o '{.*}' \
+    | jq -c 'select(.correlation_id == "<id>")'
+  ```
+
+## Testing
 
 ### Entorno de desarrollo local (venv compartido)
 
-Un único `.venv/` en la raíz del monorepo concentra las dependencias de los 3
-servicios + las herramientas de dev (ruff, mypy, pytest, pytest-cov). Es solo
-para DX local — **Docker sigue usando el `requirements.txt` de cada servicio**
-para aislamiento en runtime.
-
 ```bash
 make install                     # crea .venv e instala runtime + dev de los 3 servicios
-
-# activar el venv:
-source .venv/Scripts/activate    # Windows (Git Bash)
-source .venv/bin/activate        # Unix / macOS
+source .venv/Scripts/activate    # Windows (Git Bash) — Unix: .venv/bin/activate
 ```
 
-### Tests y lint (local)
+### Unit + integración (TDD)
+
+Cada servicio se desarrolló con **TDD** (Red -> Green -> Refactor). Los tests de integración de `order-service` e `inventory-service` corren contra **PostgreSQL real** vía `testcontainers` — SQLite no tiene `FOR UPDATE` ni row-level locking, lo que haría pasar los tests de race-condition/idempotencia sin probar nada.
 
 ```bash
 make lint      # ruff check + ruff format --check + mypy en los 3 servicios + ruff sobre shared
-make test      # pytest con cobertura en los 3 servicios (respeta el gate)
+make test      # pytest con cobertura en los 3 servicios + shared (respeta el gate)
 make format    # ruff format (auto-formatea los 3 servicios + shared)
 
 # por servicio:
 cd services/order-service && pytest -q --cov=app
 ```
 
-> El venv tiene que estar activado: los targets `lint`/`test`/`format` usan
-> `ruff`/`mypy`/`pytest` directamente desde el venv.
+| Servicio | Tests | Cobertura | Gate |
+|---|---|---|---|
+| `order-service` | 55+ | ~92% | 85 |
+| `inventory-service` | 29+ | ~85% | 40 |
+| `notification-service` | 31+ | ~92% | 85 |
+| `shared` | 23+ | — | — |
 
-#### Tests de integración del `inventory-service` (Fase 2)
+> Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`.
 
-Los tests de integración del `inventory-service` corren contra **PostgreSQL real** — SQLite no tiene `FOR UPDATE` ni row-level locking:
+### Tests e2e (`tests/e2e/`)
 
-- **Local**: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` via `testcontainers-python`. Requiere Docker corriendo. El container arranca la primera vez (~2 min), las siguientes ejecuciones dentro de la misma sesión son rápidas.
-- **CI**: el job `tests-db` ya levanta un service container Postgres 16; el conftest detecta `CI=true` y usa las `db_*` env vars directamente sin testcontainers.
+Ejercitan el **stack real completo** (RabbitMQ + 2x Postgres + Mailhog + los 3 servicios), levantado con `make up` — sin mocks ni dependency overrides. Se observa el resultado solo a través de fronteras públicas: la API HTTP de `order-service` y la API de Mailhog (`/api/v2/messages`).
 
 ```bash
-# Docker debe estar corriendo para levantar testcontainers:
-cd services/inventory-service && pytest -q --cov=app
+make up        # levanta el stack completo
+make e2e        # instala deps de tests/e2e/ y corre pytest -m e2e
 ```
+
+Cubren:
+
+- **Camino feliz**: `POST /v1/orders` con `SKU-001` (stock=100) -> polling hasta `status == "confirmed"` -> verifica el email de confirmación en Mailhog.
+- **Camino de rechazo**: `POST /v1/orders` con `SKU-005` pidiendo `quantity=999` -> polling hasta `status == "rejected"` -> verifica el email de rechazo (incluye el SKU insuficiente) en Mailhog.
+
+Ambos usan **polling con timeout** (`wait_until`, sin `sleep` fijos) porque la propagación entre servicios es asíncrona. Marcados `@pytest.mark.e2e`.
+
+**Decisión: e2e solo local, no en CI.** Levantar y *buildear* 5 contenedores (RabbitMQ + 2 Postgres + Mailhog + 3 servicios) en cada push haría el pipeline lento y más flaky (tiempos de arranque variables en runners compartidos), sin aportar señal sobre cada PR individual — los gates de calidad por servicio (`quality` + `tests-db`/`tests`) ya corren en cada uno. `make e2e` queda como verificación pre-PR / smoke test de release.
+
+**Decisión: idempotencia no se cubre con un test e2e black-box.** Verificarla de punta a punta requeriría leer `processed_events` o `available_quantity` directo de la base de datos de `inventory-service`/`order-service` desde el test — rompiendo la encapsulación database-per-service que el resto de la suite e2e respeta — o exponer un endpoint de solo-lectura creado ad-hoc para testing. La idempotencia ya está cubierta donde tiene sentido probarla: a nivel de **integración con Postgres real**, asertando directamente sobre `processed_events` y `available_quantity` (`test_order_created_retry_dlq.py`, `test_inventory_results_retry_dlq.py`, `test_order_events_retry_dlq.py`, Fases 2/3/5).
 
 ## CI/CD
 
@@ -157,76 +275,83 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 
 | Job | Qué hace |
 |---|---|
-| `quality` (matrix × 3 servicios) | `ruff check` + `ruff format --check` + `mypy app` |
+| `quality` (matrix x 3 servicios) | `ruff check` + `ruff format --check` + `mypy app` |
 | `quality-shared` | `ruff check` + `ruff format --check` sobre `shared/` |
 | `tests-db` (matrix: order, inventory) | `pytest` con cobertura sobre un **Postgres 16** efímero (service container con healthcheck `pg_isready`) |
 | `tests` (notification) | `pytest` con cobertura, sin DB |
 
 - **Python 3.12** con cache de `pip` por servicio. `actions/checkout@v4`, `actions/setup-python@v5`, `actions/upload-artifact@v4`.
-- **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` y `notification-service` están en **85** (cobertura real ~91% y ~93% respectivamente); `inventory` sigue en **40** (piso post-scaffold) hasta que crezca su lógica.
+- **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` y `notification-service` están en **85**; `inventory` sigue en **40** (piso post-scaffold).
 - El `coverage.xml` de cada servicio se sube como artefacto (`coverage-<servicio>`).
 - **Secret opcional `CI_DB_PASSWORD`:** password del Postgres de CI. Si no está seteado, el workflow usa un valor descartable para que el CI quede verde sin configuración manual.
+- Los **tests e2e no corren en CI** (ver sección Testing).
 
-## Decisiones de arquitectura (Fase 0)
+---
 
-- **Build context = raíz del repo** (no la carpeta del servicio): cada `Dockerfile` se referencia vía `build.dockerfile` para poder copiar `shared/` dentro de cada imagen. Es el patrón estándar de monorepo; apuntar el contexto a la carpeta del servicio rompería el import de `shared.contracts`.
-- **`shared/contracts/` como única fuente de los integration events.** Los servicios NO comparten entidades de dominio; solo estos modelos Pydantic viajan por el broker. Cada servicio mapea entre su dominio y estos contratos.
+## Decisiones de arquitectura
+
+### Fase 0 — Scaffold + infraestructura
+
+- **Build context = raíz del repo** (no la carpeta del servicio): cada `Dockerfile` se referencia vía `build.dockerfile` para poder copiar `shared/` dentro de cada imagen.
+- **`shared/contracts/` como única fuente de los integration events.** Los servicios no comparten entidades de dominio; solo estos modelos Pydantic viajan por el broker.
 - **El broker es un detalle de infraestructura.** Los use cases dependen del puerto `EventPublisher` (en `application/contracts/`); la implementación con `aio-pika` vive en `infrastructure/messaging/`.
-- **`presentation/` = puntos de entrada (adapters).** En order-service: `presentation/http/` (routers + schemas) y `presentation/consumers/` (handlers de eventos). En los workers: solo `presentation/consumers/`.
-- **Workers exponen un FastAPI mínimo solo para `/health`** (probe de Docker/k8s). El consumo real de eventos se inicia en el `lifespan` en fases posteriores.
-- **`/health` siempre responde 200** y reporta el estado de cada dependencia (DB/broker) en el body — distingue "proceso arriba" de "dependencia degradada" sin depender del status code. Esto hace el smoke test verde sin infra levantada.
-- **database-per-service:** `order-service` y `inventory-service` tienen cada uno su Postgres; `notification-service` no tiene DB en Fase 0.
-- **Deps por servicio:** `requirements.txt` (runtime, usado por el Dockerfile) + `requirements-dev.txt` (pytest/ruff) + `pyproject.toml` (config de ruff y pytest). Mismo patrón que el proyecto Monolith de referencia.
+- **`presentation/` = puntos de entrada (adapters).** En `order-service`: `presentation/http/` (routers + schemas) y `presentation/consumers/` (handlers de eventos). En los workers: solo `presentation/consumers/`.
+- **Workers exponen un FastAPI mínimo solo para `/health`** (probe de Docker/k8s).
+- **`/health` siempre responde 200** y reporta el estado de cada dependencia (DB/broker) en el body — distingue "proceso arriba" de "dependencia degradada" sin depender del status code.
+- **database-per-service:** `order-service` y `inventory-service` tienen cada uno su Postgres; `notification-service` no tiene DB.
+- **Deps por servicio:** `requirements.txt` (runtime) + `requirements-dev.txt` (pytest/ruff) + `pyproject.toml` (config de ruff/mypy/pytest). Mismo patrón que el proyecto Monolith de referencia.
 
-## Decisiones de arquitectura (Fase 2)
+### Fase 1 — `order-service`: crear orden + publicar `OrderCreated`
 
-- **Idempotencia vía tabla `processed_events`.** RabbitMQ es *at-least-once*: el mismo `OrderCreated` puede llegar dos veces. El `event_id` se registra dentro de la **misma transacción** que los decrementos de stock con `INSERT ... ON CONFLICT DO NOTHING`. Si ya existía → `rowcount == 0` → el use case hace ACK sin re-procesar y sin re-publicar. Rechazos también registran su `event_id`, así que un redelivery de un pedido rechazado tampoco republica el `StockRejected`.
+- **Use case asíncrono (`AsyncUseCase`).** El puerto `EventPublisher.publish` es `async` (aio-pika), así que `CreateOrder.execute` tiene que poder `await`. Se añadió una base `AsyncUseCase` separada de la `UseCase` síncrona (`GetOrder`) para que el límite sync/async sea explícito a nivel de tipos.
+- **Consistencia: publish-after-commit (MVP).** El use case primero persiste+commitea la orden y *después* publica `OrderCreated`. Deja una ventana de *dual-write*: si la publicación falla, la orden existe pero no se emitió el evento. El endurecimiento es un **outbox transaccional** (fuera de alcance del MVP).
+- **El use case retorna la entidad de dominio `Order`**; el endpoint la mapea a `OrderResponse` con un mapper de presentación (Domain Entity -> Response Schema). La entidad nunca se expone directa como respuesta HTTP.
+- **`declare_topology()` en el `lifespan`.** Idempotente en RabbitMQ, seguro en cada arranque. Si el broker no está disponible, el arranque sigue resiliente y `/health` lo reporta degradado.
+- **Rutas versionadas (`/v1/orders`).**
+- **Migraciones con Alembic** (`env.py` resuelve la URL desde `DATABASE_URL` o `db_*`). El contenedor corre `alembic upgrade head` al arrancar.
+- **Tests sin infraestructura real** (Fase 1): integración con SQLite in-memory + publisher spy (retrofit a Postgres real en Fase 3).
 
-- **Reserva atómica anti race-condition.**  
+### Fase 2 — `inventory-service`: reserva atómica + idempotencia
+
+- **Idempotencia vía tabla `processed_events`.** El `event_id` se registra dentro de la **misma transacción** que los decrementos de stock con `INSERT ... ON CONFLICT DO NOTHING`. Si ya existía -> `rowcount == 0` -> ACK sin re-procesar y sin re-publicar.
+- **Reserva atómica anti race-condition.**
   ```sql
   UPDATE products
   SET    available_quantity = available_quantity - :qty
   WHERE  sku = :sku AND available_quantity >= :qty
   ```
-  Postgres evalúa el `WHERE` con row-level locking: dos transacciones concurrentes para el mismo SKU se serializan. Si `rowcount == 0` → stock insuficiente. Además, un `SAVEPOINT reserve_all` envuelve todos los decrementos (all-or-nothing): si cualquier línea falla, se hace `ROLLBACK TO SAVEPOINT` y el UoW puede aún hacer commit del `event_id` (para evitar que la delivery se repita eternamente).
+  Postgres evalúa el `WHERE` con row-level locking: dos transacciones concurrentes para el mismo SKU se serializan. `rowcount == 0` -> stock insuficiente. `SAVEPOINT reserve_all` envuelve todos los decrementos (all-or-nothing).
+- **Unit of Work (UoW) como contrato de transacción.** `register_event` + `reserve_all` comparten la misma sesión; `uow.commit()` los confirma juntos. Sigue existiendo la ventana publish-after-commit (mismo patrón Fase 1); endurecimiento = outbox transaccional.
+- **Tests con PostgreSQL real (testcontainers).** SQLite no tiene `FOR UPDATE`/row-level locking real, lo que haría pasar los tests de race-condition sin probar nada. CI usa el service container; local usa `PostgresContainer`.
+- **Migración Alembic + seed de productos** (`SKU-001..005`, ver tabla más arriba) para poder probar el flujo sin datos manuales.
+- **Consumer como adapter puro.** `build_order_created_handler` es una factory: deserializa, construye params, invoca el use case, ACK. Cero lógica de negocio en el consumer.
 
-- **Unit of Work (UoW) como contrato de transacción.** `register_event` + `reserve_all` comparten la misma sesión SQLAlchemy. El use case hace `uow.commit()` después de ambas operaciones: el `event_id` y los decrementos de stock commitean juntos. Si el broker falla *después* del commit, la orden ya está reservada pero `StockReserved` no se publicó — la misma ventana dual-write que en la Fase 1 (publish-after-commit, MVP). El endurecimiento es un outbox transaccional (Fase posterior).
+### Fase 3 — `order-service`: confirmar/rechazar + idempotencia
 
-- **Tests con PostgreSQL real (testcontainers).** SQLite no tiene `FOR UPDATE` ni row-level locking reales, lo que haría pasar los tests de race-condition sin probar nada (falsa confianza). Los tests de integración usan `testcontainers[postgres]` local y el service container de CI. El conftest detecta el entorno automáticamente: si `CI=true` → usa las `db_*` env vars del job; si no → lanza `PostgresContainer("postgres:16-alpine")`.
+- Consumer `inventory_results_consumer.py` consume `StockReserved`/`StockRejected` -> use cases `ConfirmOrder`/`RejectOrder` -> publica `OrderConfirmed`/`OrderRejected`.
+- Idempotencia atómica con tabla `processed_events` y `OrderUnitOfWork`, mismo patrón que Fase 2.
+- Retrofit de los tests de integración a Postgres real (antes SQLite), para mantener la garantía de idempotencia probada con row-level locking real.
 
-- **Migración Alembic + seed de productos.** La migración `a1b2c3d4e5f6` crea `products` + `processed_events` e inserta 5 productos con stock inicial (SKU-001..005) para poder probar el flujo end-to-end sin datos manuales. El Dockerfile corre `alembic upgrade head` antes de `uvicorn`.
+### Fase 4 — `notification-service`: email vía SMTP/Mailhog
 
-- **Consumer como adapter puro (capa presentation).** `build_order_created_handler` es una factory que recibe un `ReserveStock` ya construido y retorna el coroutine de aio-pika. Cero lógica de negocio en el consumer: deserializa, construye `ReserveStockParams`, invoca el use case, y ACK. Testeable sin broker real.
+- **Sin idempotencia persistente (limitación documentada del MVP).** A diferencia de `order-service`/`inventory-service`, `notification-service` no tiene base de datos por diseño — es un consumer puro que solo habla con SMTP. Un redelivery de `OrderConfirmed`/`OrderRejected` puede reenviar el mismo email. Se acepta para el MVP: un email duplicado es molesto pero no corrompe estado de negocio. Mitigado parcialmente en Fase 5 (`InMemoryEventDeduplicator`).
+- **Destinatario derivado del `customer_id` (limitación documentada del MVP).** Los eventos llevan `customer_id`, no un email. Sin un customer-service, el mapper deriva un placeholder determinístico `{customer_id}@example.com`.
+- **Patrón factory del consumer** (igual que Fases 2/3): `build_order_events_handler(use_case)` deserializa, dispatch por `event_type` (`order.confirmed`/`order.rejected`), mapea, ejecuta el use case y ACK. `event_type` desconocido -> NACK sin requeue (dead-letter).
+- **Puerto `EmailSender`, no `smtplib` directo.** `SmtpEmailSender` (target Mailhog) vive en `infrastructure/email/`; los tests de integración mockean `smtplib.SMTP`.
 
-## Decisiones de arquitectura (Fase 4)
+### Fase 5 — DLQ + retries con backoff
 
-- **Sin idempotencia persistente (limitación documentada del MVP).** A diferencia de `order-service` (Fase 3, tabla `processed_events`), `notification-service` no tiene base de datos por diseño — es un consumer puro que solo habla con SMTP. RabbitMQ es *at-least-once*, así que un redelivery de `OrderConfirmed`/`OrderRejected` (p. ej. si el proceso muere después del `send()` pero antes del `ack()`) puede reenviar el mismo email al cliente. Para el MVP se acepta esta limitación: un email duplicado es molesto pero no corrompe estado de negocio (a diferencia de un doble decremento de stock). **Mitigación futura (Fase 5+):** tabla `processed_events` con `INSERT ... ON CONFLICT DO NOTHING` sobre `event_id` (mismo patrón de Fase 2/3), o dedup en el `EmailSender` a nivel de adapter.
+- **Retry-with-backoff + DLQ compartidos en `shared/messaging/`.** `retry_policy.py` (clasificación de errores + decisión retry/DLQ, puro) y `retry_dispatcher.py` (`wrap_with_retry`, side-effecting: ack/nack/republish) se implementaron una vez y se reusan en los 3 servicios.
+- **Backoff de 3 etapas vía colas TTL + DLX (sin plugins).** Por cada cola principal `<queue>` se declaran `<queue>.retry-5s` (TTL 5s), `<queue>.retry-30s` (TTL 30s) y `<queue>.retry-2m` (TTL 120s), cada una con `x-dead-letter-exchange: ""` + `x-dead-letter-routing-key: <queue>` — al expirar el TTL el mensaje vuelve solo a la cola principal. `MAX_RETRIES = 3`.
+- **Contador de intentos en header `x-retry-count`.** Si el handler falla y la excepción es `TRANSIENT` con reintentos disponibles, se republica a `<queue>.retry-{etapa}` con `x-retry-count` incrementado y se ACKea el mensaje original. `PERMANENT` o reintentos agotados -> `nack(requeue=False)` -> `<queue>.dlq`.
+- **Clasificación transient vs permanent.** `pydantic.ValidationError`, `json.JSONDecodeError` y `ValueError` (payload malformado / `event_type`/outcome desconocido) son **PERMANENT** -> DLQ inmediato. Cualquier otra excepción (caída de Postgres/SMTP) es **TRANSIENT** -> sigue el backoff.
+- **Fix de un bug de Fases 1-4: DLQ "fantasma".** Las 3 colas principales declaraban `x-dead-letter-exchange: "orders.dlx"`, un exchange topic nunca declarado ni bindeado -> cualquier `nack(requeue=False)` perdía el mensaje silenciosamente. Corregido usando el exchange por defecto (`""`) + `x-dead-letter-routing-key: <queue>.dlq`. Cubierto por `tests/integration/test_topology.py` en los 3 servicios.
+- **Idempotencia hace que los reintentos sean seguros.** `order-service`/`inventory-service` ya tenían `processed_events`; `notification-service` agrega `InMemoryEventDeduplicator` (set acotado FIFO de `event_id` vistos). Limitación documentada: no sobrevive reinicios del proceso.
+- **Inspeccionar las DLQ:** RabbitMQ Management -> *Queues* -> `<service>.<queue>.dlq` (botón *Get messages* muestra body + headers `x-retry-count`/`x-death`).
 
-- **Destinatario derivado del `customer_id` (limitación documentada del MVP).** Los eventos `OrderConfirmed`/`OrderRejected` (`shared/contracts/order_events.py`) llevan `customer_id`, no un email. El MVP no tiene un servicio/directorio de clientes que resuelva `customer_id → email`, así que el mapper (`application/mappers/order_event_mapper.py`) deriva un placeholder determinístico `{customer_id}@example.com`. En un sistema real esto sería una consulta a un customer-service o a una tabla de perfiles.
+### Fase 6 — Observabilidad: logging JSON + correlation ID
 
-- **Patrón factory del consumer (igual que Fases 2/3).** `build_order_events_handler(use_case)` cierra sobre `SendOrderNotification` ya wireado y retorna el coroutine de aio-pika. Deserializa, dispatch por `event_type` (`order.confirmed` / `order.rejected`), mapea a params, ejecuta el use case y hace ACK. `event_type` desconocido → NACK sin requeue (dead-letter). Testeable sin broker real (mensajes fake) y sin SMTP real (`EmailSender` spy/fake).
-
-- **Puerto `EmailSender`, no `smtplib` directo.** El use case `SendOrderNotification` depende del contrato `application/contracts/email_sender.py`; `SmtpEmailSender` (target Mailhog) vive en `infrastructure/email/`. Los tests de integración del adapter mockean `smtplib.SMTP` — nunca abren un socket real.
-
-## Decisiones de arquitectura (Fase 5)
-
-- **Retry-with-backoff + DLQ compartidos en `shared/messaging/`.** `retry_policy.py` (clasificación de errores + decisión de retry/DLQ, puro y testeado en `unit`) y `retry_dispatcher.py` (`wrap_with_retry`, side-effecting: ack/nack/republish, testeado en `unit` con AsyncMock) se implementaron una sola vez y se reusan en los 3 servicios. `wrap_with_retry(handler, channel=..., main_queue_name=...)` envuelve el handler de cada consumer en su `lifespan`.
-
-- **Backoff de 3 etapas vía colas TTL + DLX (sin plugins).** Por cada cola principal `<queue>` se declaran 3 colas de retry: `<queue>.retry-5s` (TTL 5s), `<queue>.retry-30s` (TTL 30s) y `<queue>.retry-2m` (TTL 120s). Cada una tiene `x-dead-letter-exchange: ""` + `x-dead-letter-routing-key: <queue>`, así que al expirar el TTL el mensaje vuelve solo (vía exchange por defecto, ruteo por nombre de cola — sin bindings) a la cola principal para reintentarse. `MAX_RETRIES = 3` (= cantidad de etapas, `shared/messaging/retry_policy.py`).
-
-- **Contador de intentos en header `x-retry-count`.** El dispatcher lee `x-retry-count` del mensaje (default 0). Si el handler falla: clasifica la excepción → si es `TRANSIENT` y `retry_count < MAX_RETRIES`, republica a `<queue>.retry-{etapa correspondiente}` con `x-retry-count` incrementado y hace ACK del mensaje original (la cola de retry es la que reintroduce el mensaje tras el TTL). Si es `PERMANENT` o ya se agotaron los 3 reintentos → `nack(requeue=False)`, lo que lo manda directo a `<queue>.dlq` vía el `x-dead-letter-exchange` de la cola principal.
-
-- **Clasificación transient vs permanent (`classify_exception`).** `pydantic.ValidationError`, `json.JSONDecodeError` y `ValueError` (payload malformado o `event_type`/outcome desconocido) son **PERMANENT** → DLQ inmediato, sin gastar reintentos (no tiene sentido reintentar un mensaje que siempre va a fallar igual). Cualquier otra excepción (p. ej. `RuntimeError` por caída de Postgres o de SMTP) es **TRANSIENT** → sigue el backoff.
-
-- **Fix de un bug de Fases 1-4: DLQ "fantasma".** Las 3 colas principales declaraban `x-dead-letter-exchange: "orders.dlx"`, un exchange topic que **nunca se declaraba ni bindeaba** a la `.dlq` correspondiente — un exchange topic sin binding matcheante descarta el mensaje silenciosamente (no es como el exchange por defecto). Resultado: cualquier `nack(requeue=False)` previo a Fase 5 perdía el mensaje para siempre, sin error visible. Fase 5 lo corrige usando el exchange por defecto (`""`) + `x-dead-letter-routing-key: <queue>.dlq` (ruteo por nombre de cola, no requiere binding). Cubierto por `tests/integration/test_topology.py` en los 3 servicios.
-
-- **Idempotencia hace que los reintentos sean seguros.** `order-service` e `inventory-service` ya tenían `processed_events` (Fase 2/3) — un redelivery tras un retry no duplica efectos de negocio. `notification-service` no tiene base de datos (Fase 4); Fase 5 agrega `InMemoryEventDeduplicator` (`infrastructure/dedup/`, set acotado FIFO de `event_id` vistos) para que un redelivery dentro del mismo proceso no reenvíe el email. Limitación documentada: un redelivery justo después de un *restart* del proceso puede igual reenviar un email duplicado (el dedup en memoria no sobrevive reinicios) — mitigación completa requeriría `processed_events` persistente, fuera de alcance del MVP.
-
-- **Inspeccionar las DLQ en RabbitMQ Management UI** (`http://localhost:15672`, user/pass `guest`/`guest`): pestaña *Queues*, buscar `<service>.<queue>.dlq` (p. ej. `order-service.inventory-results.dlq`, `inventory-service.order-created.dlq`, `notification-service.order-outcomes.dlq`). El botón *Get messages* permite ver el body + headers (`x-retry-count`, `x-death`) del mensaje muerto. Las colas de retry (`<queue>.retry-5s/30s/2m`) muestran mensajes "en tránsito" mientras esperan su TTL.
-
-## Decisiones de arquitectura (Fase 6)
-
-- **Logging estructurado (JSON) centralizado en `shared/observability/`.** `configure_logging(service_name)` configura `structlog` + el `logging` estándar para que **toda** línea de log (propia o de librerías como `uvicorn`/`aio-pika`) salga como un único JSON con `timestamp`, `level`, `logger`, `event` (mensaje) y campos contextuales. Se usan dos cadenas de procesadores: una para loggers de `structlog` y un `foreign_pre_chain` (`structlog.stdlib.ProcessorFormatter`) para loggers del `logging` estándar, de modo que ambos terminen en el mismo `JSONRenderer`. Cada servicio llama `configure_logging("<service>")` una sola vez al importar `app.main`, lo que agrega el campo fijo `service` a cada línea.
+- **Logging estructurado (JSON) centralizado en `shared/observability/`.** `configure_logging(service_name)` configura `structlog` + `logging` estándar para que toda línea (propia o de librerías como `uvicorn`/`aio-pika`) salga como JSON con `timestamp`, `level`, `logger`, `event`, `service` y campos contextuales. Dos cadenas de procesadores (structlog + `foreign_pre_chain` para `logging` estándar) terminan en el mismo `JSONRenderer`.
 
   ```json
   {"timestamp": "2026-06-10T12:00:00Z", "level": "info", "logger": "app.core.middleware.correlation_id",
@@ -234,57 +359,37 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
    "method": "POST", "path": "/v1/orders", "status_code": 201, "duration_ms": 12.4}
   ```
 
-- **Correlation ID end-to-end vía `structlog.contextvars`.** `shared/observability/context.py` expone `bound_correlation_id(id)` (context manager) y `get_correlation_id()`, wrappers finos sobre `bind_contextvars`/`reset_contextvars`/`get_contextvars`. Mientras el contexto está bindeado, **todas** las líneas de log emitidas (incluso desde código que no recibe el id explícitamente) llevan `correlation_id` gracias al processor `merge_contextvars`.
+- **Correlation ID end-to-end vía `structlog.contextvars`.** `shared/observability/context.py` expone `bound_correlation_id(id)` y `get_correlation_id()`. Mientras el contexto está bindeado, todas las líneas de log llevan `correlation_id` gracias al processor `merge_contextvars`.
+- **Middleware de correlation ID + request logging en `order-service`.** Por request: lee `X-Correlation-ID` (o genera `uuid4()`), bindea el id durante todo el request, emite `"request completed"` (`method`/`path`/`status_code`/`duration_ms`) y devuelve el id en el header de respuesta.
+- **Propagación a través del broker.** `BaseEvent.correlation_id` viaja en cada evento. `map_order_to_order_created` setea `correlation_id = get_correlation_id() or order.id` — separa la **identidad de negocio** (`order.id`, estable) de la **identidad de traza** (`correlation_id`, por request/cadena de eventos). En el otro extremo, `wrap_with_retry` extrae `correlation_id` del body del evento entrante y lo bindea durante el `dispatch` — único punto de integración para los 3 consumers.
+- **Filtrar logs por `correlation_id`** con `jq` (ver "Inspeccionar DLQ y trazas" más arriba) traza una orden de punta a punta a través de los 3 servicios.
+- **Tests de comportamiento para logging.** Configuración de logging = infraestructura pura (efecto secundario global), así que en vez de TDD clásico se escribieron tests de comportamiento con `structlog.testing.LogCapture` (no `capture_logs()`, que en structlog 26.x reemplaza toda la cadena de procesadores y descarta `merge_contextvars`).
 
-- **Middleware de correlation ID + request logging en `order-service`** (`app/core/middleware/correlation_id.py`). Por cada request HTTP:
-  1. Lee el header `X-Correlation-ID`; si no viene, genera un `uuid4()`.
-  2. Bindea el id al contexto de `structlog` con `bound_correlation_id(...)` para toda la duración del request.
-  3. Al terminar, emite un log `"request completed"` con `method`, `path`, `status_code` y `duration_ms` (todos JSON, todos con `correlation_id`).
-  4. Devuelve el id en el header `X-Correlation-ID` de la respuesta, para que el cliente pueda correlacionar sus propios logs.
+### Fase 7 — Tests e2e + README final
 
-- **Propagación a través del broker.** `BaseEvent.correlation_id` (ya existía desde Fase 1) viaja en cada evento. `map_order_to_order_created` ahora setea `correlation_id = get_correlation_id() or order.id` — es decir, **el trace id del request HTTP que originó la orden**, con fallback a `order.id` solo si no hay contexto HTTP bindeado (p. ej. un test que invoca el use case directamente). Esto separa la **identidad de negocio** (`order.id`, estable) de la **identidad de traza** (`correlation_id`, por request/cadena de eventos) — antes ambas eran el mismo valor.
-
-  En el otro extremo, `wrap_with_retry` (`shared/messaging/retry_dispatcher.py`) extrae `correlation_id` del body del evento entrante y lo bindea con `bound_correlation_id(...)` durante todo el `dispatch` del handler. Como **los 3 servicios** usan `wrap_with_retry` para envolver sus consumers (Fase 5), este es el **único punto de integración** necesario: cada consumer (`inventory-service` al recibir `OrderCreated`, `order-service` al recibir `StockReserved`/`StockRejected`, `notification-service` al recibir `OrderConfirmed`/`OrderRejected`) automáticamente loguea con el `correlation_id` del evento, sin tocar el código de cada handler.
-
-- **Filtrar logs por `correlation_id` para trazar un flujo completo.** Como cada línea es JSON, con `jq` se puede seguir una orden de punta a punta a través de los 3 servicios:
-
-  ```bash
-  docker compose logs order-service inventory-service notification-service --no-color \
-    | grep -o '{.*}' \
-    | jq -c 'select(.correlation_id == "a1b2c3d4-5678-90ab-cdef-1234567890ab")'
-  ```
-
-  Esto muestra, en orden cronológico, el `request completed` del POST `/v1/orders`, la reserva de stock en `inventory-service`, la confirmación en `order-service` y el envío de email en `notification-service` — todos con el mismo `correlation_id`, aunque cada uno corre en un proceso distinto.
-
-- **Tests de logging "difíciles de hacer TDD".** La configuración de logging es infraestructura pura (efecto secundario global sobre `structlog`/`logging`), así que en vez de TDD clásico se escribieron **tests de comportamiento**: capturan la salida con `structlog.testing.LogCapture` (no `capture_logs()`, que en structlog 26.x reemplaza toda la cadena de procesadores y descarta `merge_contextvars`) y verifican JSON válido + presencia/ausencia de `correlation_id` + el campo `service` correcto por servicio (`shared/tests/test_observability_config.py`, `services/*/tests/unit/test_logging_config.py`).
+- **Tests e2e en `tests/e2e/`** contra el stack real levantado con `make up` (ver sección Testing más arriba para el detalle de cobertura y las decisiones sobre CI e idempotencia).
+- **mypy sobre `shared/`:** el error preexistente documentado en Fase 6 (`shared/messaging/retry_dispatcher.py:56`) no reproduce con la configuración actual (`mypy --ignore-missing-imports`, mismas stubs que usan los servicios) y `shared/` no forma parte del gate de `make lint`/CI (que solo corre `ruff check shared`). Se deja documentado por si se decide en el futuro agregar `mypy` a `quality-shared`.
 
 ---
 
-## Decisiones de arquitectura (Fase 1)
+## Mejoras futuras (post-MVP)
 
-- **Use case asíncrono (`AsyncUseCase`).** El puerto `EventPublisher.publish` es `async` (aio-pika), así que `CreateOrder.execute` tiene que poder `await`. Se añadió una base `AsyncUseCase` en `common/` separada de la `UseCase` síncrona para que el límite sync/async sea explícito a nivel de tipos. `GetOrder` queda síncrono.
-- **Consistencia: publish-after-commit (MVP).** El use case primero persiste+commitea la orden y *después* publica `OrderCreated`. Esto deja una ventana de *dual-write*: si la publicación falla, la orden existe pero no se emitió el evento. Es aceptable para el MVP; el endurecimiento es un **outbox transaccional** (Fase 2+).
-- **`correlation_id = order_id`.** El id de la orden correlaciona todos los eventos de su ciclo de vida (`order.created` → `stock.reserved` → `order.confirmed`…) para tracing end-to-end.
-- **El use case retorna la entidad de dominio `Order`**; el endpoint la mapea a `OrderResponse` con un mapper de presentación (dirección válida *Domain Entity → Response Schema*). La entidad nunca se expone directa como respuesta HTTP.
-- **`declare_topology()` en el `lifespan`.** Al conectar el broker se declaran exchange/queues/bindings (idempotente en RabbitMQ, seguro en cada arranque). Si el broker no está disponible, el arranque sigue resiliente y `/health` lo reporta degradado.
-- **Rutas versionadas (`/v1/orders`).** Se respeta el prefijo `/v1` que ya fijaba el router del scaffold.
-- **Migraciones con Alembic** replicando el patrón del Monolith (`env.py` resuelve la URL desde `DATABASE_URL` o `db_*`). `alembic check` confirma que la migración inicial calza exacto con los modelos ORM. El contenedor corre `alembic upgrade head` al arrancar para que la tabla `orders` exista antes de servir.
-- **Tests sin infraestructura real.** Los tests de integración inyectan por `dependency_overrides` un **SQLite in-memory** (persistencia real, sin Postgres) y un **publisher spy** (captura de eventos, sin RabbitMQ). La cobertura es determinística → CI == local.
+- **Outbox transaccional** para eliminar la ventana de dual-write *publish-after-commit* (Fases 1/2/3).
+- **Tracing distribuido** (OpenTelemetry + Jaeger) y métricas (Prometheus/Grafana) — el correlation ID end-to-end (Fase 6) ya es la base para esta instrumentación.
+- **Auth en `order-service`** (JWT) para proteger `/v1/orders`.
+- **Customer directory service** para resolver `customer_id -> email` real (hoy es un placeholder `{customer_id}@example.com`).
+- **Idempotencia persistente en `notification-service`** (`processed_events`) para reemplazar el dedup en memoria (no sobrevive reinicios).
+- **Deploy** (Kubernetes / un PaaS) — hoy el stack solo corre vía Docker Compose local.
 
-## Patrones demostrados
+## Estado del MVP
 
-Idempotency keys · Dead-letter queues (DLQ) · Retries con backoff · Eventual consistency · Correlation IDs · Logging estructurado (JSON)
+- [x] **Fase 0** — Scaffold + `docker-compose` (RabbitMQ + Postgres + Mailhog) + CI/CD
+- [x] **Fase 1** — `order-service`: POST /orders + GET /orders/{id} + publica `OrderCreated`
+- [x] **Fase 2** — `inventory-service`: consume `OrderCreated`, reserva atómica + idempotencia
+- [x] **Fase 3** — `order-service`: consume `StockReserved`/`StockRejected`, idempotencia, publica `OrderConfirmed`/`OrderRejected`
+- [x] **Fase 4** — `notification-service`: consume `OrderConfirmed`/`OrderRejected` -> email vía Mailhog
+- [x] **Fase 5** — DLQ + retries con backoff (3 etapas) en los 3 servicios
+- [x] **Fase 6** — Observabilidad: logging JSON + correlation ID end-to-end
+- [x] **Fase 7** — Tests e2e del flujo completo + README final
 
-> Tracing distribuido (OpenTelemetry + Jaeger) y métricas (Prometheus/Grafana) están planificados para una fase posterior al MVP. Fase 6 ya cubre correlation IDs end-to-end y logging JSON, que son la base para esa instrumentación.
-
-## Estado
-
-- [x] **Fase 0** — Scaffold + `docker-compose` (RabbitMQ + Postgres + Mailhog)
-- [x] **Fase 0.5** — CI/CD (GitHub Actions), plantillas de GitHub y venv de desarrollo
-- [x] **Fase 1** — `order-service`: POST /orders + GET /orders/{id} + publica `OrderCreated` (Alembic, cobertura ~88%)
-- [x] **Fase 2** — `inventory-service`: consume `OrderCreated`, reserva atómica (anti race-condition), idempotencia (Alembic + seed, cobertura ~84%)
-- [x] **Fase 3** — `order-service`: consume `StockReserved`/`StockRejected` → `ConfirmOrder`/`RejectOrder`, idempotencia (UoW + `processed_events`), publica `OrderConfirmed`/`OrderRejected`, retrofit a Postgres real en tests (cobertura ~91%)
-- [x] **Fase 4** — `notification-service`: consume `OrderConfirmed`/`OrderRejected` → email vía `EmailSender` (SMTP/Mailhog), gate de cobertura subido a 85 (cobertura real ~93%)
-- [x] **Fase 5** — DLQ + retries con backoff (3 etapas: 5s/30s/2m, `x-retry-count`, fix de DLQ "fantasma" Fases 1-4, dedup en memoria en `notification-service`)
-- [x] **Fase 6** — Hardening de observabilidad: logging estructurado (JSON) en los 3 servicios + correlation ID end-to-end (HTTP → eventos → consumers) + middleware de request logging en `order-service`
-- [ ] Fase 7 — README final + tests e2e
+**MVP completo.** Mejoras futuras listadas arriba.
