@@ -13,7 +13,7 @@ else
     VENV_PY := $(VENV)/bin/python
 endif
 
-.PHONY: help install up down logs ps build test lint format
+.PHONY: help install up down logs ps build test lint format e2e
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -66,3 +66,9 @@ format: ## Auto-format every service and the shared package with ruff
 		(cd services/$$svc && ruff format .); \
 	done
 	ruff format shared
+
+e2e: ## Run e2e tests against the real stack (requires `make up` first)
+	@echo "==> installing e2e test deps"
+	@$(VENV_PY) -m pip install -q -r tests/e2e/requirements.txt
+	@echo "==> running e2e tests"
+	@(cd tests/e2e && $(CURDIR)/$(VENV_PY) -m pytest -q -m e2e)

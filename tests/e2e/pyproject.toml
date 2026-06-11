@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+testpaths = ["."]
+markers = [
+    "e2e: full-stack tests against the real docker-compose stack (requires `make up`)",
+]
