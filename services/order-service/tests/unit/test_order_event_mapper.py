@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 from shared.contracts.order_events import OrderCreated
+from shared.observability.context import bound_correlation_id
 
 from app.features.orders.application.mappers.order_event_mapper import (
     map_order_to_order_created,
@@ -47,6 +48,15 @@ def test_should_carry_the_total_amount() -> None:
     assert map_order_to_order_created(_order()).total_amount == Decimal("25.50")
 
 
-def test_should_use_order_id_as_correlation_id_for_tracing() -> None:
-    # correlation_id ties together every event of this order's lifecycle.
+def test_should_fall_back_to_order_id_as_correlation_id_when_no_request_context() -> None:
+    # No HTTP request context bound (e.g. unit test) -> falls back to order id.
     assert map_order_to_order_created(_order()).correlation_id == "order-1"
+
+
+def test_should_use_request_correlation_id_when_bound() -> None:
+    # The HTTP request's correlation id (bound by correlation_id_middleware)
+    # takes precedence so the whole order lifecycle traces back to it.
+    with bound_correlation_id("trace-xyz"):
+        event = map_order_to_order_created(_order())
+
+    assert event.correlation_id == "trace-xyz"

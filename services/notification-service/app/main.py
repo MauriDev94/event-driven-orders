@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from shared.messaging.retry_dispatcher import wrap_with_retry
+from shared.observability.config import configure_logging
 
 from app.core.exceptions.error_handling import register_exception_handlers
 from app.core.messaging.connection import RabbitMQConnection
@@ -52,6 +53,8 @@ async def lifespan(app: FastAPI):
     yield
     await broker.close()
 
+
+configure_logging("notification-service")
 
 app = FastAPI(title="notification-service", version="0.1.0", lifespan=lifespan)
 register_exception_handlers(app)

@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from shared.messaging.retry_dispatcher import wrap_with_retry
+from shared.observability.config import configure_logging
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
@@ -66,6 +67,8 @@ def _build_session_factory(config) -> sessionmaker:  # type: ignore[type-arg]
 
     return Database(config).session
 
+
+configure_logging("inventory-service")
 
 app = FastAPI(title="inventory-service", version="0.1.0", lifespan=lifespan)
 register_exception_handlers(app)

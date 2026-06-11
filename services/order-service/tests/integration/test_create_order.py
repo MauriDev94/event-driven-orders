@@ -45,7 +45,27 @@ def test_should_publish_order_created_when_creating(api_client, spy_publisher) -
     assert isinstance(event, OrderCreated)
     assert routing_key == "order.created"
     assert event.order_id == order_id
-    assert event.correlation_id == order_id
+
+
+def test_should_propagate_request_correlation_id_to_order_created(
+    api_client, spy_publisher
+) -> None:
+    response = api_client.post(
+        "/v1/orders", json=_VALID_BODY, headers={"X-Correlation-ID": "trace-abc-123"}
+    )
+
+    assert response.headers["X-Correlation-ID"] == "trace-abc-123"
+    event, _ = spy_publisher.calls[0]
+    assert event.correlation_id == "trace-abc-123"
+
+
+def test_should_generate_correlation_id_when_not_provided(api_client, spy_publisher) -> None:
+    response = api_client.post("/v1/orders", json=_VALID_BODY)
+
+    generated_id = response.headers["X-Correlation-ID"]
+    assert generated_id
+    event, _ = spy_publisher.calls[0]
+    assert event.correlation_id == generated_id
 
 
 def test_should_return_422_when_the_order_has_no_lines(api_client) -> None:
