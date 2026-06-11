@@ -3,7 +3,7 @@
 > Sistema de procesamiento de órdenes basado en eventos — microservicios asíncronos con **RabbitMQ**.
 > Portfolio project para demostrar sistemas distribuidos, mensajería y Clean Architecture.
 
-🚧 **Work in progress** — Fase 2 (`inventory-service`: consumir `OrderCreated`, reservar stock con atomicidad + idempotencia) ✅ completada.
+🚧 **Work in progress** — Fase 6 (hardening de observabilidad: logging JSON + correlation IDs end-to-end) ✅ completada.
 
 ---
 
@@ -224,6 +224,40 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 
 - **Inspeccionar las DLQ en RabbitMQ Management UI** (`http://localhost:15672`, user/pass `guest`/`guest`): pestaña *Queues*, buscar `<service>.<queue>.dlq` (p. ej. `order-service.inventory-results.dlq`, `inventory-service.order-created.dlq`, `notification-service.order-outcomes.dlq`). El botón *Get messages* permite ver el body + headers (`x-retry-count`, `x-death`) del mensaje muerto. Las colas de retry (`<queue>.retry-5s/30s/2m`) muestran mensajes "en tránsito" mientras esperan su TTL.
 
+## Decisiones de arquitectura (Fase 6)
+
+- **Logging estructurado (JSON) centralizado en `shared/observability/`.** `configure_logging(service_name)` configura `structlog` + el `logging` estándar para que **toda** línea de log (propia o de librerías como `uvicorn`/`aio-pika`) salga como un único JSON con `timestamp`, `level`, `logger`, `event` (mensaje) y campos contextuales. Se usan dos cadenas de procesadores: una para loggers de `structlog` y un `foreign_pre_chain` (`structlog.stdlib.ProcessorFormatter`) para loggers del `logging` estándar, de modo que ambos terminen en el mismo `JSONRenderer`. Cada servicio llama `configure_logging("<service>")` una sola vez al importar `app.main`, lo que agrega el campo fijo `service` a cada línea.
+
+  ```json
+  {"timestamp": "2026-06-10T12:00:00Z", "level": "info", "logger": "app.core.middleware.correlation_id",
+   "event": "request completed", "service": "order-service", "correlation_id": "a1b2c3d4-...",
+   "method": "POST", "path": "/v1/orders", "status_code": 201, "duration_ms": 12.4}
+  ```
+
+- **Correlation ID end-to-end vía `structlog.contextvars`.** `shared/observability/context.py` expone `bound_correlation_id(id)` (context manager) y `get_correlation_id()`, wrappers finos sobre `bind_contextvars`/`reset_contextvars`/`get_contextvars`. Mientras el contexto está bindeado, **todas** las líneas de log emitidas (incluso desde código que no recibe el id explícitamente) llevan `correlation_id` gracias al processor `merge_contextvars`.
+
+- **Middleware de correlation ID + request logging en `order-service`** (`app/core/middleware/correlation_id.py`). Por cada request HTTP:
+  1. Lee el header `X-Correlation-ID`; si no viene, genera un `uuid4()`.
+  2. Bindea el id al contexto de `structlog` con `bound_correlation_id(...)` para toda la duración del request.
+  3. Al terminar, emite un log `"request completed"` con `method`, `path`, `status_code` y `duration_ms` (todos JSON, todos con `correlation_id`).
+  4. Devuelve el id en el header `X-Correlation-ID` de la respuesta, para que el cliente pueda correlacionar sus propios logs.
+
+- **Propagación a través del broker.** `BaseEvent.correlation_id` (ya existía desde Fase 1) viaja en cada evento. `map_order_to_order_created` ahora setea `correlation_id = get_correlation_id() or order.id` — es decir, **el trace id del request HTTP que originó la orden**, con fallback a `order.id` solo si no hay contexto HTTP bindeado (p. ej. un test que invoca el use case directamente). Esto separa la **identidad de negocio** (`order.id`, estable) de la **identidad de traza** (`correlation_id`, por request/cadena de eventos) — antes ambas eran el mismo valor.
+
+  En el otro extremo, `wrap_with_retry` (`shared/messaging/retry_dispatcher.py`) extrae `correlation_id` del body del evento entrante y lo bindea con `bound_correlation_id(...)` durante todo el `dispatch` del handler. Como **los 3 servicios** usan `wrap_with_retry` para envolver sus consumers (Fase 5), este es el **único punto de integración** necesario: cada consumer (`inventory-service` al recibir `OrderCreated`, `order-service` al recibir `StockReserved`/`StockRejected`, `notification-service` al recibir `OrderConfirmed`/`OrderRejected`) automáticamente loguea con el `correlation_id` del evento, sin tocar el código de cada handler.
+
+- **Filtrar logs por `correlation_id` para trazar un flujo completo.** Como cada línea es JSON, con `jq` se puede seguir una orden de punta a punta a través de los 3 servicios:
+
+  ```bash
+  docker compose logs order-service inventory-service notification-service --no-color \
+    | grep -o '{.*}' \
+    | jq -c 'select(.correlation_id == "a1b2c3d4-5678-90ab-cdef-1234567890ab")'
+  ```
+
+  Esto muestra, en orden cronológico, el `request completed` del POST `/v1/orders`, la reserva de stock en `inventory-service`, la confirmación en `order-service` y el envío de email en `notification-service` — todos con el mismo `correlation_id`, aunque cada uno corre en un proceso distinto.
+
+- **Tests de logging "difíciles de hacer TDD".** La configuración de logging es infraestructura pura (efecto secundario global sobre `structlog`/`logging`), así que en vez de TDD clásico se escribieron **tests de comportamiento**: capturan la salida con `structlog.testing.LogCapture` (no `capture_logs()`, que en structlog 26.x reemplaza toda la cadena de procesadores y descarta `merge_contextvars`) y verifican JSON válido + presencia/ausencia de `correlation_id` + el campo `service` correcto por servicio (`shared/tests/test_observability_config.py`, `services/*/tests/unit/test_logging_config.py`).
+
 ---
 
 ## Decisiones de arquitectura (Fase 1)
@@ -239,9 +273,9 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 
 ## Patrones demostrados
 
-Idempotency keys · Dead-letter queues (DLQ) · Retries con backoff · Eventual consistency · Correlation IDs
+Idempotency keys · Dead-letter queues (DLQ) · Retries con backoff · Eventual consistency · Correlation IDs · Logging estructurado (JSON)
 
-> Observabilidad (OpenTelemetry + Jaeger + Prometheus/Grafana) está planificada para una fase posterior al MVP.
+> Tracing distribuido (OpenTelemetry + Jaeger) y métricas (Prometheus/Grafana) están planificados para una fase posterior al MVP. Fase 6 ya cubre correlation IDs end-to-end y logging JSON, que son la base para esa instrumentación.
 
 ## Estado
 
@@ -252,4 +286,5 @@ Idempotency keys · Dead-letter queues (DLQ) · Retries con backoff · Eventual 
 - [x] **Fase 3** — `order-service`: consume `StockReserved`/`StockRejected` → `ConfirmOrder`/`RejectOrder`, idempotencia (UoW + `processed_events`), publica `OrderConfirmed`/`OrderRejected`, retrofit a Postgres real en tests (cobertura ~91%)
 - [x] **Fase 4** — `notification-service`: consume `OrderConfirmed`/`OrderRejected` → email vía `EmailSender` (SMTP/Mailhog), gate de cobertura subido a 85 (cobertura real ~93%)
 - [x] **Fase 5** — DLQ + retries con backoff (3 etapas: 5s/30s/2m, `x-retry-count`, fix de DLQ "fantasma" Fases 1-4, dedup en memoria en `notification-service`)
-- [ ] Fase 6 — README final + tests e2e
+- [x] **Fase 6** — Hardening de observabilidad: logging estructurado (JSON) en los 3 servicios + correlation ID end-to-end (HTTP → eventos → consumers) + middleware de request logging en `order-service`
+- [ ] Fase 7 — README final + tests e2e

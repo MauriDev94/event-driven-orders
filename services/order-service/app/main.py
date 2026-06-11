@@ -3,12 +3,14 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from shared.messaging.retry_dispatcher import wrap_with_retry
+from shared.observability.config import configure_logging
 from sqlalchemy import text
 from sqlalchemy.orm import sessionmaker
 
 from app.core.exceptions.error_handling import register_exception_handlers
 from app.core.messaging.connection import RabbitMQConnection
 from app.core.messaging.topology import ORDER_RESULTS_QUEUE, declare_topology
+from app.core.middleware.correlation_id import correlation_id_middleware
 from app.core.providers.db import get_db_session
 from app.core.providers.env_config import get_env_config
 from app.features.orders.application.usecases.confirm_order_use_case import ConfirmOrder
@@ -68,7 +70,10 @@ def _build_session_factory(config) -> sessionmaker:  # type: ignore[type-arg]
     return Database(config).session
 
 
+configure_logging("order-service")
+
 app = FastAPI(title="order-service", version="0.1.0", lifespan=lifespan)
+app.middleware("http")(correlation_id_middleware)
 register_exception_handlers(app)
 app.include_router(orders_router)
 

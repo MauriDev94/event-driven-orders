@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from shared.messaging.retry_dispatcher import wrap_with_retry
 from shared.messaging.retry_policy import RETRY_COUNT_HEADER, RETRY_STAGES
+from shared.observability.context import get_correlation_id
 
 pytestmark = pytest.mark.unit
 
@@ -167,3 +168,36 @@ async def test_should_dead_letter_immediately_on_unknown_event_type_value_error(
 
     channel.default_exchange.publish.assert_not_awaited()
     message.nack.assert_awaited_once_with(requeue=False)
+
+
+# ---------------------------------------------------------------------------
+# Correlation id propagation (Fase 6)
+# ---------------------------------------------------------------------------
+
+
+async def test_should_bind_correlation_id_from_event_body_during_handler() -> None:
+    captured: dict[str, str | None] = {}
+
+    async def handler(message) -> None:
+        captured["correlation_id"] = get_correlation_id()
+
+    channel = _fake_channel()
+    message = _fake_message(body=b'{"correlation_id": "corr-xyz"}')
+
+    dispatch = wrap_with_retry(handler, channel=channel, main_queue_name=MAIN_QUEUE)
+    await dispatch(message)
+
+    assert captured["correlation_id"] == "corr-xyz"
+    assert get_correlation_id() is None
+
+
+async def test_should_not_fail_when_event_body_has_no_correlation_id() -> None:
+    handler = AsyncMock()
+    channel = _fake_channel()
+    message = _fake_message()
+
+    dispatch = wrap_with_retry(handler, channel=channel, main_queue_name=MAIN_QUEUE)
+    await dispatch(message)
+
+    handler.assert_awaited_once_with(message)
+    assert get_correlation_id() is None

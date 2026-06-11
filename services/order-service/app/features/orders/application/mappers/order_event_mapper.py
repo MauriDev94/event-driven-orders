@@ -6,6 +6,7 @@ broker/aio-pika detail stays behind the EventPublisher port.
 """
 
 from shared.contracts.order_events import OrderConfirmed, OrderCreated, OrderItem, OrderRejected
+from shared.observability.context import get_correlation_id
 
 from app.features.orders.domain.entities.order import Order
 
@@ -30,12 +31,14 @@ def map_order_to_order_rejected(
 def map_order_to_order_created(order: Order) -> OrderCreated:
     """Build the ``OrderCreated`` contract from a persisted order.
 
-    ``correlation_id`` is set to the order id so every downstream event of
-    this order's lifecycle (stock.reserved -> order.confirmed, ...) can be
-    traced back to a single business flow.
+    ``correlation_id`` is the HTTP request's correlation id (bound by
+    ``correlation_id_middleware``), so every downstream event of this order's
+    lifecycle (stock.reserved -> order.confirmed, ...) can be traced back to
+    the originating request. Falls back to the order id when no request
+    context is bound (e.g. unit tests, non-HTTP callers).
     """
     return OrderCreated(
-        correlation_id=order.id or "",
+        correlation_id=get_correlation_id() or order.id or "",
         order_id=order.id or "",
         customer_id=order.customer_id,
         items=[
