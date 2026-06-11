@@ -1,3 +1,10 @@
+"""Cold-start broker reconnection: when RabbitMQ is unreachable at startup,
+the bounded retry gives up but a background watchdog keeps retrying and
+finishes startup once the broker becomes reachable — no manual restart
+needed. See ``shared/tests/test_connection.py`` for the retry/backoff logic
+itself.
+"""
+
 from unittest.mock import AsyncMock
 
 import pytest
@@ -7,38 +14,6 @@ import app.main as main_module
 from app.main import app
 
 pytestmark = pytest.mark.integration
-
-
-class _FakeBroker:
-    """Stand-in broker that always connects, exposing a sentinel channel."""
-
-    def __init__(self, url: str) -> None:
-        self.url = url
-
-    async def connect(self) -> None:
-        return None
-
-    async def close(self) -> None:
-        return None
-
-    @property
-    def is_connected(self) -> bool:
-        return True
-
-    @property
-    def channel(self) -> str:
-        return "fake-channel"
-
-
-def test_should_declare_topology_on_startup_when_broker_connects(monkeypatch) -> None:
-    declare_spy = AsyncMock()
-    monkeypatch.setattr(main_module, "RabbitMQConnection", _FakeBroker)
-    monkeypatch.setattr(main_module, "declare_topology", declare_spy)
-
-    with TestClient(app):
-        pass
-
-    declare_spy.assert_awaited_once_with("fake-channel")
 
 
 class _FakeBrokerThatNeverConnects:
@@ -70,9 +45,6 @@ async def _await(task) -> None:
 def test_should_spawn_watchdog_and_recover_when_broker_unreachable_at_startup(
     monkeypatch,
 ) -> None:
-    """Cold start: the broker is down. The bounded retry in the lifespan
-    gives up, but a background watchdog keeps retrying and finishes startup
-    once the broker becomes reachable — no manual restart needed."""
     declare_spy = AsyncMock()
     connect_with_retry_mock = AsyncMock(side_effect=[False, True])
     monkeypatch.setattr(main_module, "RabbitMQConnection", _FakeBrokerThatNeverConnects)

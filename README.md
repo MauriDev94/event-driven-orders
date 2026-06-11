@@ -208,6 +208,14 @@ Invoke-RestMethod -Uri http://localhost:8001/v1/orders -Method Post -Body $body 
 
 La orden termina en `status: "rejected"` y llega un email "Your order `<order_id>` was rejected" con el motivo (`insufficient stock for product SKU-005`) a `c-2@example.com`.
 
+### Verificar la reconexión al broker
+
+1. `make up` — esperar a que los 3 servicios reporten `"broker": "healthy"` en `/health`.
+2. `docker compose restart rabbitmq` (o `docker compose stop rabbitmq` y luego `start rabbitmq` para simular un cold start más largo).
+3. Mientras RabbitMQ está caído, `/health` de los 3 servicios debe reportar `"broker": "unhealthy"` — pero los procesos siguen corriendo (no crashean, no hace falta `docker compose restart <servicio>`).
+4. Cuando RabbitMQ vuelve a estar disponible, los logs (`docker compose logs -f order-service inventory-service notification-service`) muestran `"connected to broker after N attempt(s)"` y `/health` vuelve a `"broker": "healthy"` solo, sin intervención manual.
+5. Probar el flujo end-to-end (sección de arriba) para confirmar que los consumers siguen procesando eventos tras la reconexión.
+
 ### Inspeccionar DLQ y trazas
 
 - **RabbitMQ Management** (`guest`/`guest`): pestaña *Queues*, buscar `<service>.<queue>.dlq` o `.retry-5s/30s/2m`.
@@ -370,6 +378,15 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 - **Tests e2e en `tests/e2e/`** contra el stack real levantado con `make up` (ver sección Testing más arriba para el detalle de cobertura y las decisiones sobre CI e idempotencia).
 - **mypy sobre `shared/`:** el error preexistente documentado en Fase 6 (`shared/messaging/retry_dispatcher.py:56`) no reproduce con la configuración actual (`mypy --ignore-missing-imports`, mismas stubs que usan los servicios) y `shared/` no forma parte del gate de `make lint`/CI (que solo corre `ruff check shared`). Se deja documentado por si se decide en el futuro agregar `mypy` a `quality-shared`.
 
+### Fase 8a — Resiliencia de conexión al broker
+
+- **Gotcha resuelto: cold start sin reconexión.** Hasta esta fase, los 3 servicios usaban `aio_pika.connect_robust()` (que ya maneja reconexión automática **una vez conectado**), pero `connect_robust` con `fail_fast=True` (default) **no reintenta el primer connect**: si RabbitMQ todavía no está listo cuando el servicio arranca, la excepción se loguea y el `lifespan` queda con `broker.is_connected == False` para siempre — requería un restart manual.
+- **`connect_with_retry` en `shared/messaging/connection.py`** (junto a `RabbitMQConnection`, antes duplicada en los 3 servicios — ahora una sola fuente, mismo criterio DRY que `wrap_with_retry`/observabilidad). Backoff exponencial capado (`base_delay=1s`, `max_delay=30s`, dobla cada intento).
+- **Retry acotado al arranque + watchdog en background.** El `lifespan` intenta conectar hasta `max_attempts=5` veces (1+2+4+8s ≈ 15s, cubre el caso normal de cold start en `docker compose`). Si sigue sin poder conectar, lanza una tarea en background (`max_attempts=None`, backoff capado a 30s) que reintenta indefinidamente y completa la declaración de topología + el consumer apenas el broker responde — **sin restart manual**.
+- **Reconexión en caliente: gratis vía `connect_robust`.** Una vez lograda la primera conexión, si RabbitMQ se cae y vuelve, `connect_robust` reconecta solo y re-declara exchanges/queues/bindings/consumers registrados en su `RobustChannel` — no requiere código propio.
+- **Logging estructurado de cada intento/reconexión** (`%s: broker connection attempt %d failed...`, `%s: connected to broker after %d attempt(s)`) para poder operar el sistema en producción.
+- **Tests:** `shared/tests/test_connection.py` cubre la lógica de retry/backoff de forma pura (connector mockeado, sin I/O real): éxito al primer intento, reintentos con backoff exponencial, agotamiento de `max_attempts`, retry indefinido, cap de `max_delay`, y clasificación de errores transitorios vs no-relacionados a conexión. Cada servicio agrega un test de integración (`test_lifespan_broker_reconnect.py`) que verifica el wiring lifespan -> watchdog -> `_start_consuming`. La reconexión real de `connect_robust` no se testea con testcontainers (sería lento y básicamente testearía la librería); su comportamiento queda documentado arriba y se verifica a mano (ver "Verificar la reconexión al broker" más abajo).
+
 ---
 
 ## Mejoras futuras (post-MVP)
@@ -391,5 +408,6 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 - [x] **Fase 5** — DLQ + retries con backoff (3 etapas) en los 3 servicios
 - [x] **Fase 6** — Observabilidad: logging JSON + correlation ID end-to-end
 - [x] **Fase 7** — Tests e2e del flujo completo + README final
+- [x] **Fase 8a** — Resiliencia de conexión al broker: retry con backoff en cold start + reconexión automática
 
 **MVP completo.** Mejoras futuras listadas arriba.
