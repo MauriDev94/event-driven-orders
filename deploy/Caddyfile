@@ -1,0 +1,37 @@
+# ----------------------------------------------------------------------------
+# Event-Driven Orders — Caddy reverse proxy (producción)
+#
+# Caddy obtiene certificados HTTPS automáticamente vía Let's Encrypt para
+# cada dominio declarado abajo (HTTP-01 challenge sobre el puerto 80).
+#
+# {$DOMAIN} debe resolver a la IP pública de la VM. Con sslip.io alcanza con
+# usar "<ip-con-guiones>.sslip.io" como DOMAIN (ej: 203-0-113-10.sslip.io);
+# los subdominios "rabbitmq.<DOMAIN>" / "mailhog.<DOMAIN>" resuelven a la
+# misma IP automáticamente.
+#
+# Generar los hashes de basic auth con:
+#   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<password>'
+# y pegar el resultado (incluye el prefijo $2a$...) en RABBITMQ_UI_PASSWORD_HASH
+# / MAILHOG_UI_PASSWORD_HASH dentro de .env.production.
+# ----------------------------------------------------------------------------
+
+# --- order-service: API + Swagger, público --------------------------------
+{$DOMAIN} {
+	reverse_proxy order-service:8000
+}
+
+# --- RabbitMQ Management UI: protegido con basic auth ----------------------
+rabbitmq.{$DOMAIN} {
+	basicauth {
+		{$RABBITMQ_UI_USER} {$RABBITMQ_UI_PASSWORD_HASH}
+	}
+	reverse_proxy rabbitmq:15672
+}
+
+# --- Mailhog UI: protegido con basic auth -----------------------------------
+mailhog.{$DOMAIN} {
+	basicauth {
+		{$MAILHOG_UI_USER} {$MAILHOG_UI_PASSWORD_HASH}
+	}
+	reverse_proxy mailhog:8025
+}

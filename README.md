@@ -277,6 +277,19 @@ Ambos usan **polling con timeout** (`wait_until`, sin `sleep` fijos) porque la p
 
 **Decisión: idempotencia no se cubre con un test e2e black-box.** Verificarla de punta a punta requeriría leer `processed_events` o `available_quantity` directo de la base de datos de `inventory-service`/`order-service` desde el test — rompiendo la encapsulación database-per-service que el resto de la suite e2e respeta — o exponer un endpoint de solo-lectura creado ad-hoc para testing. La idempotencia ya está cubierta donde tiene sentido probarla: a nivel de **integración con Postgres real**, asertando directamente sobre `processed_events` y `available_quantity` (`test_order_created_retry_dlq.py`, `test_inventory_results_retry_dlq.py`, `test_order_events_retry_dlq.py`, Fases 2/3/5).
 
+## Despliegue
+
+Guía completa para desplegar el stack en una VM Linux (Docker Compose + Caddy
+con HTTPS automático): **[DEPLOY.md](DEPLOY.md)**.
+
+- `docker-compose.prod.yml`: override de producción (sin exponer Postgres/AMQP
+  al host, `restart: always`, agrega `caddy`).
+- `deploy/Caddyfile`: reverse proxy — `order-service` público, RabbitMQ
+  Management UI y Mailhog UI detrás de basic auth.
+- `deploy/env.production.example`: variables de entorno de producción (copiar
+  a `.env.production`).
+- `deploy/deploy.sh`: re-deploy idempotente (`git pull` + `up -d --build`).
+
 ## CI/CD
 
 GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
@@ -387,6 +400,38 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 - **Logging estructurado de cada intento/reconexión** (`%s: broker connection attempt %d failed...`, `%s: connected to broker after %d attempt(s)`) para poder operar el sistema en producción.
 - **Tests:** `shared/tests/test_connection.py` cubre la lógica de retry/backoff de forma pura (connector mockeado, sin I/O real): éxito al primer intento, reintentos con backoff exponencial, agotamiento de `max_attempts`, retry indefinido, cap de `max_delay`, y clasificación de errores transitorios vs no-relacionados a conexión. Cada servicio agrega un test de integración (`test_lifespan_broker_reconnect.py`) que verifica el wiring lifespan -> watchdog -> `_start_consuming`. La reconexión real de `connect_robust` no se testea con testcontainers (sería lento y básicamente testearía la librería); su comportamiento queda documentado arriba y se verifica a mano (ver "Verificar la reconexión al broker" más abajo).
 
+### Fase 8b — Preparación de deploy
+
+- **`docker-compose.prod.yml` como override**, no como reemplazo: se usa con
+  `-f docker-compose.yml -f docker-compose.prod.yml`. Mantiene un único
+  archivo base para dev/prod y aísla las diferencias de producción
+  (`restart: always`, sin exponer Postgres/AMQP al host, servicio `caddy`).
+- **`!reset []` para limpiar `ports` heredados.** Docker Compose por defecto
+  concatena listas entre archivos (no las reemplaza), así que remover el
+  port mapping al host de los Postgres/RabbitMQ requiere la sintaxis
+  `!reset` (Compose Specification, soportada desde Compose v2.24). En
+  versiones más viejas el tag se ignora sin error pero no limpia la lista —
+  documentado como requisito en `docker-compose.prod.yml` y `DEPLOY.md`.
+- **Mailhog se mantiene en producción** (decisión de portfolio): el objetivo
+  es que un reclutador pueda hacer `POST /v1/orders` y ver el email
+  capturado en la Mailhog UI, sin depender de un proveedor SMTP real.
+- **Caddy como único punto de entrada** (puertos 80/443, HTTPS automático vía
+  Let's Encrypt). Solo `order-service` (API + `/docs`), RabbitMQ Management UI
+  y Mailhog UI son alcanzables desde internet — las dos últimas protegidas con
+  `basicauth` en subdominios (`rabbitmq.<dominio>`, `mailhog.<dominio>`). Las
+  bases de datos nunca se exponen.
+- **Dominio parametrizable vía `DOMAIN`.** `DEPLOY.md` recomienda `sslip.io`
+  (`<ip-con-guiones>.sslip.io`) para no depender de un dominio propio: resuelve
+  automáticamente la IP y cualquier subdominio, permitiendo HTTPS con Caddy
+  sin configuración de DNS adicional.
+- **Gotcha: escapado de `$` en hashes bcrypt.** Docker Compose interpola `$VAR`
+  dentro de los valores de `.env`; un hash bcrypt (`$2a$14$...`) se trunca y
+  genera warnings si no se escribe con `$$` (`$$2a$$14$$...`). Documentado en
+  `deploy/env.production.example` y `DEPLOY.md`.
+- **Esta fase no despliega nada.** Deja el repo listo (compose override,
+  Caddyfile, `.env` de ejemplo, guía paso a paso); el deploy real en la VM
+  (Oracle Cloud Always Free) es manual y queda para la Fase 8c.
+
 ---
 
 ## Mejoras futuras (post-MVP)
@@ -396,7 +441,7 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 - **Auth en `order-service`** (JWT) para proteger `/v1/orders`.
 - **Customer directory service** para resolver `customer_id -> email` real (hoy es un placeholder `{customer_id}@example.com`).
 - **Idempotencia persistente en `notification-service`** (`processed_events`) para reemplazar el dedup en memoria (no sobrevive reinicios).
-- **Deploy** (Kubernetes / un PaaS) — hoy el stack solo corre vía Docker Compose local.
+- **Orquestación con Kubernetes** — hoy el deploy de producción es Docker Compose en una sola VM (ver [Despliegue](#despliegue)).
 
 ## Estado del MVP
 
@@ -409,5 +454,6 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 - [x] **Fase 6** — Observabilidad: logging JSON + correlation ID end-to-end
 - [x] **Fase 7** — Tests e2e del flujo completo + README final
 - [x] **Fase 8a** — Resiliencia de conexión al broker: retry con backoff en cold start + reconexión automática
+- [x] **Fase 8b** — Preparación de deploy: `docker-compose.prod.yml` + Caddy (HTTPS) + `DEPLOY.md`, listo para desplegar (Fase 8c: ejecución manual en VM)
 
 **MVP completo.** Mejoras futuras listadas arriba.

@@ -1,0 +1,76 @@
+# ----------------------------------------------------------------------------
+# Event-Driven Orders — production override
+#
+# Uso:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+#     --env-file .env.production up -d --build
+#
+# Cambios respecto al stack de dev (docker-compose.yml):
+#   - restart: always en todos los servicios.
+#   - Las bases de datos NO exponen puertos al host (solo red interna edo_net).
+#   - RabbitMQ no expone 5672/15672 al host; la management UI entra vía Caddy.
+#   - Se agrega Caddy como reverse proxy con auto-HTTPS (Let's Encrypt),
+#     único punto de entrada desde internet (puertos 80/443).
+#
+# Requisito: Docker Compose >= 2.24 (enero 2024) para que `!reset []` limpie
+# los `ports` heredados del compose base. Verificar con `docker compose version`
+# (Ubuntu/Docker oficiales en 2026 ya cumplen de sobra). En versiones más
+# viejas `!reset` se ignora sin error, pero los puertos quedarían publicados.
+# ----------------------------------------------------------------------------
+
+services:
+  rabbitmq:
+    restart: always
+    ports: !reset []
+
+  postgres-orders:
+    restart: always
+    ports: !reset []
+
+  postgres-inventory:
+    restart: always
+    ports: !reset []
+
+  mailhog:
+    restart: always
+    ports: !reset []
+
+  order-service:
+    restart: always
+    ports: !reset []
+
+  inventory-service:
+    restart: always
+    ports: !reset []
+
+  notification-service:
+    restart: always
+    ports: !reset []
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: edo_caddy
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+      RABBITMQ_UI_USER: ${RABBITMQ_UI_USER}
+      RABBITMQ_UI_PASSWORD_HASH: ${RABBITMQ_UI_PASSWORD_HASH}
+      MAILHOG_UI_USER: ${MAILHOG_UI_USER}
+      MAILHOG_UI_PASSWORD_HASH: ${MAILHOG_UI_PASSWORD_HASH}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - order-service
+      - rabbitmq
+      - mailhog
+    networks:
+      - edo_net
+
+volumes:
+  caddy_data:
+  caddy_config:
