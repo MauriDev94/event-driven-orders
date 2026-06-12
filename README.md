@@ -279,8 +279,8 @@ Ambos usan **polling con timeout** (`wait_until`, sin `sleep` fijos) porque la p
 
 ## Despliegue
 
-Guía completa para desplegar el stack en una VM Linux (Docker Compose + Caddy
-con HTTPS automático): **[DEPLOY.md](DEPLOY.md)**.
+Stack listo para correr en una VM Linux con Docker Compose + Caddy (HTTPS
+automático):
 
 - `docker-compose.prod.yml`: override de producción (sin exponer Postgres/AMQP
   al host, `restart: always`, agrega `caddy`).
@@ -289,6 +289,11 @@ con HTTPS automático): **[DEPLOY.md](DEPLOY.md)**.
 - `deploy/env.production.example`: variables de entorno de producción (copiar
   a `.env.production`).
 - `deploy/deploy.sh`: re-deploy idempotente (`git pull` + `up -d --build`).
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  --env-file .env.production up -d --build
+```
 
 ## CI/CD
 
@@ -411,7 +416,7 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
   port mapping al host de los Postgres/RabbitMQ requiere la sintaxis
   `!reset` (Compose Specification, soportada desde Compose v2.24). En
   versiones más viejas el tag se ignora sin error pero no limpia la lista —
-  documentado como requisito en `docker-compose.prod.yml` y `DEPLOY.md`.
+  documentado como requisito en `docker-compose.prod.yml`.
 - **Mailhog se mantiene en producción** (decisión de portfolio): el objetivo
   es que un reclutador pueda hacer `POST /v1/orders` y ver el email
   capturado en la Mailhog UI, sin depender de un proveedor SMTP real.
@@ -420,17 +425,17 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
   y Mailhog UI son alcanzables desde internet — las dos últimas protegidas con
   `basicauth` en subdominios (`rabbitmq.<dominio>`, `mailhog.<dominio>`). Las
   bases de datos nunca se exponen.
-- **Dominio parametrizable vía `DOMAIN`.** `DEPLOY.md` recomienda `sslip.io`
+- **Dominio parametrizable vía `DOMAIN`.** Se recomienda `sslip.io`
   (`<ip-con-guiones>.sslip.io`) para no depender de un dominio propio: resuelve
   automáticamente la IP y cualquier subdominio, permitiendo HTTPS con Caddy
   sin configuración de DNS adicional.
 - **Gotcha: escapado de `$` en hashes bcrypt.** Docker Compose interpola `$VAR`
   dentro de los valores de `.env`; un hash bcrypt (`$2a$14$...`) se trunca y
   genera warnings si no se escribe con `$$` (`$$2a$$14$$...`). Documentado en
-  `deploy/env.production.example` y `DEPLOY.md`.
+  `deploy/env.production.example`.
 - **Esta fase no despliega nada.** Deja el repo listo (compose override,
-  Caddyfile, `.env` de ejemplo, guía paso a paso); el deploy real en la VM
-  (Oracle Cloud Always Free) es manual y queda para la Fase 8c.
+  Caddyfile, `.env` de ejemplo); el deploy real en la VM (Oracle Cloud Always
+  Free) es manual y queda para la Fase 8c.
 
 ---
 
@@ -454,6 +459,6 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 - [x] **Fase 6** — Observabilidad: logging JSON + correlation ID end-to-end
 - [x] **Fase 7** — Tests e2e del flujo completo + README final
 - [x] **Fase 8a** — Resiliencia de conexión al broker: retry con backoff en cold start + reconexión automática
-- [x] **Fase 8b** — Preparación de deploy: `docker-compose.prod.yml` + Caddy (HTTPS) + `DEPLOY.md`, listo para desplegar (Fase 8c: ejecución manual en VM)
+- [x] **Fase 8b** — Preparación de deploy: `docker-compose.prod.yml` + Caddy (HTTPS), listo para desplegar (Fase 8c: ejecución manual en VM)
 
 **MVP completo.** Mejoras futuras listadas arriba.

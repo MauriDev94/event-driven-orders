@@ -26,6 +26,9 @@ coverage.xml
 .env.*
 !.env.example
 
+# Deploy docs (uso local, no se versiona)
+DEPLOY.md
+
 # IDE
 .vscode/
 .idea/
