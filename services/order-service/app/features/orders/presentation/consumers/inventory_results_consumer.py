@@ -15,10 +15,12 @@ unit-testable without a real broker.
 
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 
 import aio_pika
 from shared.contracts.inventory_events import StockRejected, StockReserved
+from shared.observability.metrics import EVENT_PROCESSING_SECONDS, EVENTS_PROCESSED
 
 from app.features.orders.application.usecases.confirm_order_use_case import (
     ConfirmOrder,
@@ -37,6 +39,8 @@ MessageHandler = Callable[[aio_pika.abc.AbstractIncomingMessage], Awaitable[None
 def build_inventory_result_handler(
     confirm_use_case: ConfirmOrder,
     reject_use_case: RejectOrder,
+    *,
+    service_name: str = "order-service",
 ) -> MessageHandler:
     """Return a coroutine that routes a single inventory-result message.
 
@@ -47,8 +51,10 @@ def build_inventory_result_handler(
     """
 
     async def handle(message: aio_pika.abc.AbstractIncomingMessage) -> None:
+        start = time.perf_counter()
         body = json.loads(message.body)
         event_type = body.get("event_type")
+        duplicate = False
 
         if event_type == "stock.reserved":
             event = StockReserved.model_validate(body)
@@ -58,7 +64,8 @@ def build_inventory_result_handler(
                 correlation_id=event.correlation_id,
             )
             confirm_result = await confirm_use_case.execute(confirm_params)
-            if confirm_result.duplicate:
+            duplicate = confirm_result.duplicate
+            if duplicate:
                 logger.info("duplicate StockReserved %s — skipped", event.event_id)
 
         elif event_type == "stock.rejected":
@@ -70,7 +77,8 @@ def build_inventory_result_handler(
                 reason=event.reason,
             )
             reject_result = await reject_use_case.execute(reject_params)
-            if reject_result.duplicate:
+            duplicate = reject_result.duplicate
+            if duplicate:
                 logger.info("duplicate StockRejected %s — skipped", event.event_id)
 
         else:
@@ -78,6 +86,11 @@ def build_inventory_result_handler(
             await message.nack(requeue=False)
             return
 
+        if not duplicate:
+            EVENTS_PROCESSED.labels(service=service_name, event_type=event_type).inc()
+            EVENT_PROCESSING_SECONDS.labels(service=service_name).observe(
+                time.perf_counter() - start
+            )
         await message.ack()
 
     return handle

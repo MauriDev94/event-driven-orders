@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from prometheus_fastapi_instrumentator import Instrumentator
 from shared.messaging.connection import RabbitMQConnection, connect_with_retry
 from shared.messaging.retry_dispatcher import wrap_with_retry
 from shared.observability.config import configure_logging
@@ -88,6 +89,8 @@ async def _start_consuming(app: FastAPI, broker: RabbitMQConnection) -> None:
 configure_logging(SERVICE_NAME)
 
 app = FastAPI(title="notification-service", version="0.1.0", lifespan=lifespan)
+Instrumentator().instrument(app).expose(app)
+
 register_exception_handlers(app)
 
 

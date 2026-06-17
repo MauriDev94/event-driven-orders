@@ -442,11 +442,51 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 ## Mejoras futuras (post-MVP)
 
 - **Outbox transaccional** para eliminar la ventana de dual-write *publish-after-commit* (Fases 1/2/3).
-- **Tracing distribuido** (OpenTelemetry + Jaeger) y métricas (Prometheus/Grafana) — el correlation ID end-to-end (Fase 6) ya es la base para esta instrumentación.
+- **Tracing distribuido** (OpenTelemetry + Jaeger) — el correlation ID end-to-end (Fase 6) ya es la base para esta instrumentación.
 - **Auth en `order-service`** (JWT) para proteger `/v1/orders`.
 - **Customer directory service** para resolver `customer_id -> email` real (hoy es un placeholder `{customer_id}@example.com`).
 - **Idempotencia persistente en `notification-service`** (`processed_events`) para reemplazar el dedup en memoria (no sobrevive reinicios).
 - **Orquestación con Kubernetes** — hoy el deploy de producción es Docker Compose en una sola VM (ver [Despliegue](#despliegue)).
+
+---
+
+## Observabilidad: métricas con Prometheus y Grafana (Fase 9)
+
+El sistema expone el **pilar de métricas** como complemento al logging JSON estructurado (Fase 6).
+
+### Stack
+
+| Componente | Puerto | Descripción |
+|---|---|---|
+| **Prometheus** | `9090` | Scraping de los 3 servicios + RabbitMQ |
+| **Grafana** | `3000` | Dashboard con provisioning automático |
+| **RabbitMQ** metrics | `15692` | Plugin `rabbitmq_prometheus` |
+
+### Métricas custom (prefijo `edo_`)
+
+| Métrica | Tipo | Labels | Descripción |
+|---|---|---|---|
+| `edo_events_processed_total` | Counter | `service`, `event_type` | Eventos procesados exitosamente |
+| `edo_events_dlq_total` | Counter | `queue` | Eventos enviados a DLQ |
+| `edo_events_retried_total` | Counter | `queue` | Reintentos de eventos |
+| `edo_event_processing_seconds` | Histogram | `service` | Latencia de procesamiento |
+
+HTTP metrics automáticas (por servicio) vía `prometheus-fastapi-instrumentator`.
+
+### Levantar el stack de observabilidad
+
+```bash
+docker compose up -d prometheus grafana
+```
+
+- **Prometheus**: <http://localhost:9090>
+- **Grafana**: <http://localhost:3000> (user: `admin` / pass: `admin`)
+
+El dashboard **Event-Driven Orders** carga automáticamente al iniciar Grafana (provisioning). Incluye paneles para throughput, latencia p95, DLQ, reintentos y profundidad de colas RabbitMQ.
+
+### Screenshot del dashboard
+
+> _TODO: agregar screenshot del dashboard en producción tras primer deploy en Oracle Cloud._
 
 ## Estado del MVP
 
@@ -460,5 +500,6 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 - [x] **Fase 7** — Tests e2e del flujo completo + README final
 - [x] **Fase 8a** — Resiliencia de conexión al broker: retry con backoff en cold start + reconexión automática
 - [x] **Fase 8b** — Preparación de deploy: `docker-compose.prod.yml` + Caddy (HTTPS), listo para desplegar (Fase 8c: ejecución manual en VM)
+- [x] **Fase 9** — Observabilidad: métricas con Prometheus + Grafana (HTTP auto + 4 métricas de negocio + broker metrics)
 
 **MVP completo.** Mejoras futuras listadas arriba.
