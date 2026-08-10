@@ -87,9 +87,7 @@ def build_order_events_handler(
         if event_id is not None:
             deduplicator.mark_seen(event_id)
         EVENTS_PROCESSED.labels(service=service_name, event_type=event_type).inc()
-        EVENT_PROCESSING_SECONDS.labels(service=service_name).observe(
-            time.perf_counter() - start
-        )
+        EVENT_PROCESSING_SECONDS.labels(service=service_name).observe(time.perf_counter() - start)
         await message.ack()
 
     return handle
