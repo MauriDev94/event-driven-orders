@@ -23,10 +23,12 @@ see README.
 
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 
 import aio_pika
 from shared.contracts.order_events import OrderConfirmed, OrderRejected
+from shared.observability.metrics import EVENT_PROCESSING_SECONDS, EVENTS_PROCESSED
 
 from app.features.notifications.application.mappers.order_event_mapper import (
     map_order_confirmed_to_params,
@@ -47,6 +49,8 @@ MessageHandler = Callable[[aio_pika.abc.AbstractIncomingMessage], Awaitable[None
 def build_order_events_handler(
     use_case: SendOrderNotification,
     deduplicator: InMemoryEventDeduplicator,
+    *,
+    service_name: str = "notification-service",
 ) -> MessageHandler:
     """Return a coroutine that routes a single order-outcome message.
 
@@ -57,6 +61,7 @@ def build_order_events_handler(
     """
 
     async def handle(message: aio_pika.abc.AbstractIncomingMessage) -> None:
+        start = time.perf_counter()
         body = json.loads(message.body)
         event_type = body.get("event_type")
         event_id = body.get("event_id")
@@ -81,6 +86,8 @@ def build_order_events_handler(
 
         if event_id is not None:
             deduplicator.mark_seen(event_id)
+        EVENTS_PROCESSED.labels(service=service_name, event_type=event_type).inc()
+        EVENT_PROCESSING_SECONDS.labels(service=service_name).observe(time.perf_counter() - start)
         await message.ack()
 
     return handle

@@ -5,3 +5,5 @@ psycopg2-binary==2.9.11
 aio-pika>=9.4,<10
 alembic==1.18.4
 structlog>=24.1,<27
+prometheus-fastapi-instrumentator>=8.0.0
+prometheus-client>=0.20.0

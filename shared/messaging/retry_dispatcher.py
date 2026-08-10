@@ -29,6 +29,7 @@ from shared.messaging.retry_policy import (
     decide_retry,
 )
 from shared.observability.context import bound_correlation_id
+from shared.observability.metrics import EVENTS_DLQ, EVENTS_RETRIED
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ def wrap_with_retry(
                         retry_count,
                         exc,
                     )
+                    EVENTS_DLQ.labels(queue=main_queue_name).inc()
                     await message.nack(requeue=False)
                     return
 
@@ -75,6 +77,7 @@ def wrap_with_retry(
                     decision.next_retry_count,
                     exc,
                 )
+                EVENTS_RETRIED.labels(queue=main_queue_name).inc()
                 retry_message = aio_pika.Message(
                     body=message.body,
                     headers=headers,
