@@ -7,6 +7,7 @@ prometheus-fastapi-instrumentator).
 Keep this module free of service-specific imports — it is shared across
 all three services.
 """
+
 from prometheus_client import Counter, Histogram
 
 EVENTS_PROCESSED = Counter(

@@ -138,10 +138,15 @@ async def test_should_not_increment_retry_counter_on_success() -> None:
 def test_should_increment_events_processed_counter() -> None:
     before = _get_counter(EVENTS_PROCESSED, service="test-svc", event_type="test.event")
     EVENTS_PROCESSED.labels(service="test-svc", event_type="test.event").inc()
-    assert _get_counter(EVENTS_PROCESSED, service="test-svc", event_type="test.event") == before + 1
+    assert (
+        _get_counter(EVENTS_PROCESSED, service="test-svc", event_type="test.event")
+        == before + 1
+    )
 
 
 def test_should_record_event_processing_histogram_observation() -> None:
     before = _get_histogram_count(EVENT_PROCESSING_SECONDS, service="test-svc")
     EVENT_PROCESSING_SECONDS.labels(service="test-svc").observe(0.042)
-    assert _get_histogram_count(EVENT_PROCESSING_SECONDS, service="test-svc") == before + 1
+    assert (
+        _get_histogram_count(EVENT_PROCESSING_SECONDS, service="test-svc") == before + 1
+    )
