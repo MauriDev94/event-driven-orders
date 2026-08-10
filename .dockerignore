@@ -1,0 +1,79 @@
+# =============================================================================
+# .dockerignore — raíz del repo
+#
+# El build context de los tres servicios es la RAÍZ del repo (ver ADR-0015), de
+# modo que todo lo listado acá es lo que el daemon DEJA de recibir en cada
+# `docker compose build`.
+#
+# OJO — .dockerignore NO es .gitignore. Los patrones se evalúan contra la ruta
+# relativa a la raíz del context y no tienen el "match en cualquier nivel" de
+# git: `.mypy_cache/` excluiría SÓLO el de la raíz y dejaría pasar los cuatro
+# que viven en shared/ y en cada services/*/. Por eso todo lo anidado va con
+# el prefijo `**/`.
+#
+# Lo que los Dockerfile SÍ necesitan y por lo tanto no puede excluirse:
+#   - services/<servicio>/requirements.txt
+#   - services/<servicio>/app
+#   - services/{order,inventory}-service/alembic.ini
+#   - shared/  (completo)
+#
+# Nota: el `.env` de la raíz que docker compose usa para interpolar variables
+# se lee del filesystem, no del build context. Excluirlo acá no lo afecta.
+# =============================================================================
+
+# --- Virtualenvs -------------------------------------------------------------
+# `make install` deja un .venv compartido en la raíz (~209 MB, el grueso del
+# context). Se omite el `env/` que sí lista .gitignore: como patrón de docker
+# también matchearía cualquier archivo llamado `env`, y no existe ningún
+# virtualenv con ese nombre en el repo.
+**/.venv/
+**/venv/
+
+# --- Metadata de git ---------------------------------------------------------
+.git/
+
+# --- Caches de herramientas --------------------------------------------------
+# Presentes en la raíz, en shared/ y en los tres services/*/.
+**/.mypy_cache/
+**/.ruff_cache/
+**/.pytest_cache/
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+**/*.so
+
+# --- Cobertura ---------------------------------------------------------------
+**/.coverage
+**/.coverage.*
+**/coverage.xml
+**/htmlcov/
+
+# --- Artefactos de build de Python -------------------------------------------
+**/*.egg-info/
+**/.eggs/
+**/dist/
+**/build/
+.Python
+
+# --- Entorno y secretos ------------------------------------------------------
+# Ningún Dockerfile los copia, pero tampoco tienen por qué viajar al daemon.
+**/.env
+**/.env.*
+!**/.env.example
+
+# --- Logs --------------------------------------------------------------------
+**/logs/
+**/*.log
+
+# --- Herramientas del agente -------------------------------------------------
+# .claude/worktrees/ guarda copias completas del repo dentro del context.
+.claude/
+
+# --- Docs de uso local -------------------------------------------------------
+DEPLOY.md
+
+# --- IDE / OS ----------------------------------------------------------------
+.vscode/
+.idea/
+**/.DS_Store
+**/Thumbs.db
