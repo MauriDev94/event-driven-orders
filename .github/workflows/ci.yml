@@ -188,3 +188,50 @@ jobs:
         with:
           name: coverage-notification-service
           path: services/notification-service/coverage.xml
+
+  # ---------------------------------------------------------------------------
+  # Build the three images and smoke-test them.
+  #
+  # Nothing else in this pipeline touches Docker: quality and tests run against
+  # the runner's own Python, and the e2e suite is local-only by design
+  # (ADR-0017). Without this job a broken Dockerfile reaches the VM undetected,
+  # because `deploy/deploy.sh` builds there — production would be the first
+  # place the image is ever assembled.
+  #
+  # The build alone is not enough. An over-aggressive `.dockerignore` (ADR-0015)
+  # still builds green and yields an image that only fails at runtime, when a
+  # file it swallowed turns out to be needed. That is why the smoke step imports
+  # the real module graph inside each image: `shared/` proves the cross-service
+  # package arrived, `app.main` proves the service's own code and its installed
+  # dependencies did too. Importing `app.main` never opens a socket — the
+  # FastAPI lifespan only runs when the app starts serving.
+  # ---------------------------------------------------------------------------
+  build-images:
+    name: Build images
+    runs-on: ubuntu-latest
+    needs: [quality, quality-shared]
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Provide compose environment
+        # docker-compose.yml interpolates ${...} into `environment:` and
+        # `ports:`. The committed example carries local dev defaults only —
+        # no secret is involved, and the containers never actually start.
+        run: cp .env.example .env
+
+      - name: Build service images
+        run: docker compose build order-service inventory-service notification-service
+
+      - name: Smoke — shared/ and app/ made it into every image
+        run: |
+          for service in order-service inventory-service notification-service; do
+            echo "::group::$service"
+            docker compose run --rm --no-deps "$service" python -c \
+              "import shared.contracts.order_events, shared.observability.metrics, app.main; print('ok')"
+            echo "::endgroup::"
+          done
