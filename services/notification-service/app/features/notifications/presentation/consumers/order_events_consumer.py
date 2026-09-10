@@ -22,11 +22,11 @@ see README.
 """
 
 import json
-import logging
 import time
 from collections.abc import Awaitable, Callable
 
 import aio_pika
+import structlog
 from shared.contracts.order_events import OrderConfirmed, OrderRejected
 from shared.observability.metrics import EVENT_PROCESSING_SECONDS, EVENTS_PROCESSED
 
@@ -41,7 +41,7 @@ from app.features.notifications.infrastructure.dedup.in_memory_event_deduplicato
     InMemoryEventDeduplicator,
 )
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 MessageHandler = Callable[[aio_pika.abc.AbstractIncomingMessage], Awaitable[None]]
 
@@ -73,10 +73,24 @@ def build_order_events_handler(
 
         if event_type == "order.confirmed":
             confirmed = OrderConfirmed.model_validate(body)
+            logger.info(
+                "event received",
+                event_type=confirmed.event_type,
+                event_id=confirmed.event_id,
+                correlation_id=confirmed.correlation_id,
+                order_id=confirmed.order_id,
+            )
             use_case.execute(map_order_confirmed_to_params(confirmed))
 
         elif event_type == "order.rejected":
             rejected = OrderRejected.model_validate(body)
+            logger.info(
+                "event received",
+                event_type=rejected.event_type,
+                event_id=rejected.event_id,
+                correlation_id=rejected.correlation_id,
+                order_id=rejected.order_id,
+            )
             use_case.execute(map_order_rejected_to_params(rejected))
 
         else:
