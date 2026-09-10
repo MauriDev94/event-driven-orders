@@ -22,6 +22,7 @@ from collections.abc import Awaitable, Callable
 import aio_pika
 import structlog
 from shared.contracts.order_events import OrderCreated
+from shared.observability.event_logging import log_event_received
 from shared.observability.metrics import EVENT_PROCESSING_SECONDS, EVENTS_PROCESSED
 
 from app.features.inventory.application.usecases.reserve_stock_use_case import (
@@ -49,13 +50,7 @@ def build_order_created_handler(
     async def handle(message: aio_pika.abc.AbstractIncomingMessage) -> None:
         start = time.perf_counter()
         event = OrderCreated.model_validate_json(message.body)
-        logger.info(
-            "event received",
-            event_type=event.event_type,
-            event_id=event.event_id,
-            correlation_id=event.correlation_id,
-            order_id=event.order_id,
-        )
+        log_event_received(logger, event)
         params = ReserveStockParams(
             order_id=event.order_id,
             event_id=event.event_id,

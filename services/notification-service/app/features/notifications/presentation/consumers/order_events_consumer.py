@@ -28,6 +28,7 @@ from collections.abc import Awaitable, Callable
 import aio_pika
 import structlog
 from shared.contracts.order_events import OrderConfirmed, OrderRejected
+from shared.observability.event_logging import log_event_received
 from shared.observability.metrics import EVENT_PROCESSING_SECONDS, EVENTS_PROCESSED
 
 from app.features.notifications.application.mappers.order_event_mapper import (
@@ -73,24 +74,12 @@ def build_order_events_handler(
 
         if event_type == "order.confirmed":
             confirmed = OrderConfirmed.model_validate(body)
-            logger.info(
-                "event received",
-                event_type=confirmed.event_type,
-                event_id=confirmed.event_id,
-                correlation_id=confirmed.correlation_id,
-                order_id=confirmed.order_id,
-            )
+            log_event_received(logger, confirmed)
             use_case.execute(map_order_confirmed_to_params(confirmed))
 
         elif event_type == "order.rejected":
             rejected = OrderRejected.model_validate(body)
-            logger.info(
-                "event received",
-                event_type=rejected.event_type,
-                event_id=rejected.event_id,
-                correlation_id=rejected.correlation_id,
-                order_id=rejected.order_id,
-            )
+            log_event_received(logger, rejected)
             use_case.execute(map_order_rejected_to_params(rejected))
 
         else:
