@@ -48,7 +48,17 @@ class RabbitMQConnection:
 
     @property
     def is_connected(self) -> bool:
-        return self._connection is not None and not self._connection.is_closed
+        # ``aio_pika.RobustConnection.is_closed`` is only ``True`` when the
+        # connection is permanently closed. During its internal reconnect
+        # loop (broker dropped but the client is still retrying) ``is_closed``
+        # stays ``False`` while the underlying socket is unreachable, which
+        # would make ``/health`` lie for the entire outage. The ``connected``
+        # asyncio.Event is cleared when aio_pika enters the reconnect loop
+        # and set again when the connection is re-established, so it is the
+        # right signal for "the broker is actually reachable right now".
+        if self._connection is None or self._connection.is_closed:
+            return False
+        return self._connection.connected.is_set()
 
     @property
     def channel(self) -> aio_pika.abc.AbstractRobustChannel:
