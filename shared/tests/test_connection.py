@@ -4,6 +4,12 @@
 service can survive a cold start where RabbitMQ is not ready yet. The actual
 ``aio_pika.connect_robust`` call is mocked — these tests only cover the retry
 loop: classification, backoff schedule, and give-up behavior.
+
+``RabbitMQConnection.is_connected`` is also covered here. ``/health`` of every
+service reads it to decide whether to report ``"broker": "healthy"``. The
+property must reflect the actual reachability of the broker — including
+``aio_pika``'s reconnect loop, where ``is_closed`` stays ``False`` while the
+underlying socket is unreachable.
 """
 
 import asyncio
@@ -11,7 +17,7 @@ import asyncio
 import aio_pika.exceptions
 import pytest
 
-from shared.messaging.connection import connect_with_retry
+from shared.messaging.connection import RabbitMQConnection, connect_with_retry
 
 pytestmark = pytest.mark.unit
 
@@ -139,3 +145,57 @@ async def test_default_sleep_is_asyncio_sleep() -> None:
 
     sig = inspect.signature(connect_with_retry)
     assert sig.parameters["sleep"].default is asyncio.sleep
+
+
+class _FakeEvent:
+    """Minimal stand-in for ``asyncio.Event`` exposing only ``is_set()``."""
+
+    def __init__(self, set_: bool) -> None:
+        self._set = set_
+
+    def is_set(self) -> bool:
+        return self._set
+
+
+class _FakeConnection:
+    """Stand-in for ``aio_pika.RobustConnection`` exposing only the attributes
+    ``RabbitMQConnection.is_connected`` reads."""
+
+    def __init__(self, *, is_closed: bool, connected: bool) -> None:
+        self.is_closed = is_closed
+        self.connected = _FakeEvent(set_=connected)
+
+
+class TestRabbitMQConnectionIsConnected:
+    """Coverage for ``RabbitMQConnection.is_connected``.
+
+    Every service's ``/health`` reads this property. If it reports ``True``
+    while the broker is actually unreachable, ``/health`` lies — which is
+    exactly what happened when the implementation only checked
+    ``connection.is_closed`` (which ``aio_pika`` keeps ``False`` during its
+    internal reconnect loop).
+    """
+
+    def test_returns_false_when_connection_was_never_established(self) -> None:
+        broker = RabbitMQConnection("amqp://localhost")
+        assert broker.is_connected is False
+
+    def test_returns_false_when_connection_is_closed(self) -> None:
+        broker = RabbitMQConnection("amqp://localhost")
+        broker._connection = _FakeConnection(is_closed=True, connected=False)
+        assert broker.is_connected is False
+
+    def test_returns_false_during_reconnect_loop_when_broker_unreachable(self) -> None:
+        """When ``aio_pika``'s ``RobustConnection`` is in its reconnect loop
+        (broker down), ``is_closed`` stays ``False`` but the ``connected``
+        event is cleared. ``is_connected`` must reflect the unreachable
+        state so ``/health`` does not lie during a broker outage.
+        """
+        broker = RabbitMQConnection("amqp://localhost")
+        broker._connection = _FakeConnection(is_closed=False, connected=False)
+        assert broker.is_connected is False
+
+    def test_returns_true_when_connection_event_is_set(self) -> None:
+        broker = RabbitMQConnection("amqp://localhost")
+        broker._connection = _FakeConnection(is_closed=False, connected=True)
+        assert broker.is_connected is True
