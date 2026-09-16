@@ -12,7 +12,8 @@
 # el prefijo `**/`.
 #
 # Lo que los Dockerfile SÍ necesitan y por lo tanto no puede excluirse:
-#   - services/<servicio>/requirements.txt
+#   - pyproject.toml (raíz y de cada miembro del workspace)
+#   - uv.lock
 #   - services/<servicio>/app
 #   - services/{order,inventory}-service/alembic.ini
 #   - shared/  (completo)

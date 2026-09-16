@@ -3,15 +3,11 @@
 
 SERVICES := order-service inventory-service notification-service
 
-# Shared local dev venv at the repo root. The venv is for DX (one place to run
-# ruff/mypy/pytest across all services); Docker still uses each service's own
-# requirements.txt for runtime isolation.
-VENV := .venv
-ifeq ($(OS),Windows_NT)
-    VENV_PY := $(VENV)/Scripts/python
-else
-    VENV_PY := $(VENV)/bin/python
-endif
+# Single shared venv at the repo root; `uv sync` populates it from the
+# workspace pyproject.toml + uv.lock. All commands run via `uv run`, which
+# resolves packages against the workspace, so we get reproducible cross-platform
+# behaviour without OS-specific paths.
+UV := uv
 
 .PHONY: help install up down logs ps build test lint format e2e
 
@@ -19,17 +15,8 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Create the shared .venv and install every service's deps (runtime + dev)
-	python -m venv $(VENV)
-	$(VENV_PY) -m pip install --upgrade pip
-	@for svc in $(SERVICES); do \
-		echo "==> installing $$svc (runtime + dev)"; \
-		$(VENV_PY) -m pip install -r services/$$svc/requirements-dev.txt || exit 1; \
-	done
-	@echo ""
-	@echo "Done. Activate the venv:"
-	@echo "  Windows : source $(VENV)/Scripts/activate"
-	@echo "  Unix    : source $(VENV)/bin/activate"
+install: ## Create the shared .venv and install every workspace member (runtime + dev)
+	$(UV) sync
 
 up: ## Start the full stack (infra + services) in the background
 	docker compose up -d --build
@@ -46,29 +33,27 @@ ps: ## Show running containers and health
 build: ## Build all service images
 	docker compose build
 
-test: ## Run every service's test suite with coverage (enforces the gate)
+test: ## Run every service's test suite with coverage (enforces the per-service gate)
 	@for svc in $(SERVICES); do \
 		echo "==> testing $$svc"; \
-		(cd services/$$svc && python -m pytest -q --cov=app --cov-report=term-missing) || exit 1; \
+		(cd services/$$svc && $(UV) run pytest -q --cov=app --cov-report=term-missing) || exit 1; \
 	done
 	@echo "==> testing shared"
-	@(cd shared && python -m pytest -q) || exit 1
+	@(cd shared && $(UV) run --package shared pytest -q) || exit 1
 
 lint: ## Lint + format check + type check every service and lint the shared package
 	@for svc in $(SERVICES); do \
 		echo "==> linting $$svc"; \
-		(cd services/$$svc && ruff check . && ruff format --check . && mypy app) || exit 1; \
+		(cd services/$$svc && $(UV) run ruff check . && $(UV) run ruff format --check . && $(UV) run mypy app) || exit 1; \
 	done
-	ruff check shared
+	$(UV) run --package shared ruff check shared
+	$(UV) run --package shared ruff format --check shared
 
 format: ## Auto-format every service and the shared package with ruff
 	@for svc in $(SERVICES); do \
-		(cd services/$$svc && ruff format .); \
+		(cd services/$$svc && $(UV) run ruff format .); \
 	done
-	ruff format shared
+	$(UV) run --package shared ruff format shared
 
 e2e: ## Run e2e tests against the real stack (requires `make up` first)
-	@echo "==> installing e2e test deps"
-	@$(VENV_PY) -m pip install -q -r tests/e2e/requirements.txt
-	@echo "==> running e2e tests"
-	@(cd tests/e2e && $(CURDIR)/$(VENV_PY) -m pytest -q -m e2e)
+	$(UV) run --package event-driven-orders-e2e pytest tests/e2e -q -m e2e
