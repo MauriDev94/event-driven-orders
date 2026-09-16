@@ -1,3 +1,37 @@
+[project]
+name = "notification-service"
+version = "0.1.0"
+description = "Email notification + event consumption"
+requires-python = ">=3.12"
+# `shared` is a workspace member — uv resolves it as an editable install at
+# sync time. Notification has no DB: SQLAlchemy / psycopg2 / alembic are NOT
+# declared here. Common runtime deps come transitively from `shared`.
+dependencies = [
+    "shared",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# Tell uv that `shared` is the workspace member at ../shared, not a registry
+# package. Without this, uv looks up `shared` on PyPI and fails.
+[tool.uv.sources]
+shared = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "pytest-asyncio==1.3.0",
+    "httpx==0.28.1",
+    "ruff==0.15.11",
+    "pytest-cov==7.1.0",
+    "mypy==2.1.0",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -9,8 +43,9 @@ select = ["E", "F", "I", "B", "UP"]
 ignore = ["E501", "UP046"]
 
 [tool.pytest.ini_options]
-# `.` makes the local `app` package importable; `../..` makes the repo-root
-# `shared` package importable when running tests from this service folder.
+# `.` makes the local `app` package importable; `../..` is kept as a safety
+# net for the transition — with `shared` installed as a workspace member it is
+# no longer strictly needed, but removing it is a separate cleanup.
 pythonpath = [".", "../.."]
 testpaths = ["tests"]
 asyncio_mode = "auto"

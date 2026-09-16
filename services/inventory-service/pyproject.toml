@@ -1,3 +1,45 @@
+[project]
+name = "inventory-service"
+version = "0.1.0"
+description = "Stock reservation + event consumption"
+requires-python = ">=3.12"
+# `shared` is a workspace member — uv resolves it as an editable install at
+# sync time. Common runtime deps (fastapi, pydantic, aio-pika, structlog,
+# prometheus) are inherited transitively from `shared`.
+dependencies = [
+    "shared",
+    "SQLAlchemy>=2.0.49",
+    "psycopg2-binary==2.9.11",
+    "alembic==1.18.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# Tell uv that `shared` is the workspace member at ../shared, not a registry
+# package. Without this, uv looks up `shared` on PyPI and fails.
+[tool.uv.sources]
+shared = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "pytest-asyncio==1.3.0",
+    "httpx==0.28.1",
+    "ruff==0.15.11",
+    "pytest-cov==7.1.0",
+    "mypy==2.1.0",
+    "testcontainers[postgres]==4.9.2",
+    # Compatibility pins for testcontainers 4.9.x — newer docker / requests
+    # break the 4.9 line. Revisit when bumping testcontainers.
+    "docker<7",
+    "requests<2.32",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
@@ -14,8 +56,9 @@ ignore = ["E501", "UP046"]
 "app/core/data/source/local/alembic/env.py" = ["E402"]
 
 [tool.pytest.ini_options]
-# `.` makes the local `app` package importable; `../..` makes the repo-root
-# `shared` package importable when running tests from this service folder.
+# `.` makes the local `app` package importable; `../..` is kept as a safety
+# net for the transition — with `shared` installed as a workspace member it is
+# no longer strictly needed, but removing it is a separate cleanup.
 pythonpath = [".", "../.."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
