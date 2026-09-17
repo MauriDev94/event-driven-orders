@@ -1,0 +1,16 @@
+# Workspace-only config — no [project] block on purpose. The root is a
+# workspace aggregator: it has no Python package of its own and no runtime
+# dependencies. Each workspace member (shared, services/*, tests/e2e) is a
+# proper [project] with its own build-system, dependencies and tool config.
+#
+# Having [project] at the root breaks `uv sync` (it tries to build the root as
+# a package); `tool.uv.package = false` alone is also flaky in 0.12.x. The
+# minimal-workspace form is the recommended uv pattern for multi-package repos.
+[tool.uv.workspace]
+members = ["shared", "services/*", "tests/e2e"]
+
+# Repo-wide ruff baseline. Each service keeps its own tighter config; this is
+# for IDE convenience when linting the whole tree from the repo root.
+[tool.ruff]
+line-length = 100
+target-version = "py312"

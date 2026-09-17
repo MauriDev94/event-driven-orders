@@ -1,3 +1,51 @@
+[project]
+name = "shared"
+version = "0.1.0"
+description = "Cross-service contracts, messaging and observability"
+requires-python = ">=3.12"
+# Runtime deps shared by all three services. Services depend on `shared`
+# (workspace member) and inherit these without redeclaring them.
+dependencies = [
+    "fastapi[standard]==0.136.0",
+    "pydantic-settings==2.13.1",
+    "aio-pika>=9.4,<10",
+    "structlog>=24.1,<27",
+    "prometheus-fastapi-instrumentator>=8.0.0",
+    "prometheus-client>=0.20.0",
+    # Pinned explicitly because the contracts module imports pydantic directly
+    # (independent of fastapi's transitive range).
+    "pydantic>=2.13",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+# src/ layout — the recommended layout for uv workspaces + hatchling.
+# `packages = ["src/shared"]` ships the actual package code (`src/shared/`
+# with `__init__.py`, `contracts/`, `messaging/`, `observability/`) and skips
+# everything else. `tests/` lives at the repo root alongside `pyproject.toml`
+# (not inside src/) and is also excluded from the wheel.
+packages = ["src/shared"]
+exclude = [
+    "tests/",
+    ".pytest_cache/",
+    ".mypy_cache/",
+    ".ruff_cache/",
+    "pyproject.toml",
+    ".gitignore",
+    ".gitattributes",
+]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "pytest-asyncio==1.3.0",
+    "ruff==0.15.11",
+    "mypy==2.1.0",
+]
+
 [tool.pytest.ini_options]
 # ".." makes the repo-root importable so `shared.*` resolves when running
 # pytest from inside this directory (mirrors each service's pyproject).
@@ -7,3 +55,24 @@ asyncio_mode = "auto"
 markers = [
     "unit: pure logic tests with no I/O",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E    pycodestyle: style errors
+# F    pyflakes: unused imports, undefined names
+# I    isort: import ordering
+# B    flake8-bugbear: common traps that aren't syntax errors
+# UP   pyupgrade: modern Python syntax
+select = ["E", "F", "I", "B", "UP"]
+
+# E501: line length is handled by the formatter. UP046: keep the explicit
+# Generic[Input, Output] base on UseCase (PEP 695 type params not adopted yet).
+ignore = ["E501", "UP046"]
+
+[tool.mypy]
+python_version = "3.12"
+explicit_package_bases = true
+ignore_missing_imports = true

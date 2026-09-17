@@ -60,9 +60,7 @@ async def test_should_just_run_handler_on_success() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_should_republish_to_first_retry_queue_on_first_transient_failure() -> (
-    None
-):
+async def test_should_republish_to_first_retry_queue_on_first_transient_failure() -> None:
     handler = AsyncMock(side_effect=RuntimeError("db timeout"))
     channel = _fake_channel()
     message = _fake_message(headers={})
@@ -83,9 +81,7 @@ async def test_should_republish_to_first_retry_queue_on_first_transient_failure(
     message.nack.assert_not_awaited()
 
 
-async def test_should_advance_to_next_retry_queue_using_existing_retry_count_header() -> (
-    None
-):
+async def test_should_advance_to_next_retry_queue_using_existing_retry_count_header() -> None:
     handler = AsyncMock(side_effect=RuntimeError("db timeout"))
     channel = _fake_channel()
     message = _fake_message(headers={RETRY_COUNT_HEADER: 1})
@@ -156,9 +152,7 @@ async def test_should_dead_letter_immediately_on_validation_error() -> None:
     message.nack.assert_awaited_once_with(requeue=False)
 
 
-async def test_should_dead_letter_immediately_on_unknown_event_type_value_error() -> (
-    None
-):
+async def test_should_dead_letter_immediately_on_unknown_event_type_value_error() -> None:
     handler = AsyncMock(side_effect=ValueError("unknown event_type 'bogus'"))
     channel = _fake_channel()
     message = _fake_message(headers=None)

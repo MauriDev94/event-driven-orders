@@ -1,3 +1,30 @@
+[project]
+name = "event-driven-orders-e2e"
+version = "0.1.0"
+description = "End-to-end tests against the real docker-compose stack"
+requires-python = ">=3.12"
+# No runtime deps — e2e tests drive the services via HTTP. The services
+# themselves are reached through `make up`; this package only owns the
+# pytest suite that talks to them.
+dependencies = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# e2e is a test-only suite with no installable runtime package. Include just
+# enough files in the wheel for it to be valid; the actual tests live at
+# tests/e2e/tests and are executed from the project root, not from the wheel.
+[tool.hatch.build.targets.wheel]
+packages = ["."]
+exclude = ["tests/"]
+
+[dependency-groups]
+dev = [
+    "pytest==9.0.3",
+    "httpx==0.28.1",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["."]
 markers = [

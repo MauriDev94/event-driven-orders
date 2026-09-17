@@ -40,3 +40,7 @@ Thumbs.db
 # Docker / logs
 logs/
 *.log
+
+# Agent-local metadata (Claude/OpenCode session state, scratch notes, etc.).
+# Never committed — these dirs are regenerated on each agent run.
+.atl/

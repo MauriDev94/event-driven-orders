@@ -46,17 +46,11 @@ def test_should_classify_json_decode_error_as_permanent() -> None:
 
 
 def test_should_classify_value_error_as_permanent() -> None:
-    assert (
-        classify_exception(ValueError("unknown event_type 'foo'"))
-        is ErrorClass.PERMANENT
-    )
+    assert classify_exception(ValueError("unknown event_type 'foo'")) is ErrorClass.PERMANENT
 
 
 def test_should_classify_connection_error_as_transient() -> None:
-    assert (
-        classify_exception(ConnectionError("broker unreachable"))
-        is ErrorClass.TRANSIENT
-    )
+    assert classify_exception(ConnectionError("broker unreachable")) is ErrorClass.TRANSIENT
 
 
 def test_should_classify_generic_exception_as_transient() -> None:
@@ -79,9 +73,7 @@ def test_should_retry_with_first_backoff_stage_on_first_transient_failure() -> N
 
 def test_should_advance_through_backoff_stages_on_repeated_transient_failures() -> None:
     for retry_count, (suffix, delay_ms) in enumerate(RETRY_STAGES):
-        decision = decide_retry(
-            retry_count=retry_count, error_class=ErrorClass.TRANSIENT
-        )
+        decision = decide_retry(retry_count=retry_count, error_class=ErrorClass.TRANSIENT)
 
         assert decision.action is RetryAction.RETRY
         assert decision.retry_queue_suffix == suffix

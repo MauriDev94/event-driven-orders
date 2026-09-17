@@ -16,9 +16,9 @@ Las salidas habituales son publicar `shared/` como paquete en un índice privado
 
 | Archivo | Contenido |
 |---|---|
-| `requirements.txt` | Dependencias de runtime |
-| `requirements-dev.txt` | pytest, ruff, mypy |
-| `pyproject.toml` | Configuración de ruff/mypy/pytest y el **coverage gate** (`[tool.coverage.report] fail_under`) |
+| `pyproject.toml` (raíz) | Workspace uv (`[tool.uv.workspace]` con `members = ["shared", "services/*", "tests/e2e"]`). **No tiene** `[project]` ni `[build-system]` — la raíz no es un paquete instalable. |
+| `services/<servicio>/pyproject.toml` y `shared/pyproject.toml` | Dependencias de runtime del miembro + `[dependency-groups].dev` (pytest, ruff, mypy) + **coverage gate** (`[tool.coverage.report] fail_under`) |
+| `uv.lock` | Resolución congelada del workspace completo; `uv sync --frozen` la lee para builds reproducibles (CI y Docker) |
 
 Mismo patrón que el proyecto [Monolith](https://github.com/MauriDev94/Api_monolith) de referencia.
 
@@ -28,7 +28,7 @@ Mismo patrón que el proyecto [Monolith](https://github.com/MauriDev94/Api_monol
 
 - `shared/` entra en cada imagen sin submodules ni paquete publicado.
 - Cada servicio declara y versiona sus dependencias y su gate de cobertura de forma independiente: `order-service` y `notification-service` están en 85, `inventory-service` en 40.
-- CI puede cachear `pip` por servicio.
+- CI puede cachear `uv` por servicio (cacheado por `astral-sh/setup-uv` con clave basada en `uv.lock`).
 
 **Mitigada — el peso del context (`.dockerignore` en la raíz, 2026-08-09)**
 
@@ -48,4 +48,4 @@ El costo no era sólo de build. `COPY shared ./shared` no filtra nada, así que 
 **Negativas / limitaciones**
 
 - El context sigue siendo **todo el repo**. Cada herramienta nueva que deje un cache en el árbol viajará al daemon —y, si cae bajo `shared/` o `services/*/app/`, también a la imagen— hasta que alguien agregue su patrón al `.dockerignore`. Nada lo detecta automáticamente: el síntoma es una imagen gorda, no un build roto.
-- `make install` crea un `.venv` **compartido** para desarrollo local, que no refleja el aislamiento real de las imágenes: una dependencia que falta en el `requirements.txt` de un servicio puede pasar desapercibida en local y fallar recién en el build.
+- `uv sync` (expuesto por `make install`) crea un `.venv` **compartido** para desarrollo local, que no refleja el aislamiento real de las imágenes: una dependencia que falta en el `pyproject.toml` de un servicio puede pasar desapercibida en local y fallar recién en el build.

@@ -21,9 +21,7 @@ def get_correlation_id() -> str | None:
 @contextmanager
 def bound_correlation_id(correlation_id: str) -> Iterator[None]:
     """Bind ``correlation_id`` to the logging context for the block's duration."""
-    tokens = structlog.contextvars.bind_contextvars(
-        **{CORRELATION_ID_KEY: correlation_id}
-    )
+    tokens = structlog.contextvars.bind_contextvars(**{CORRELATION_ID_KEY: correlation_id})
     try:
         yield
     finally:

@@ -46,9 +46,7 @@ def wrap_with_retry(
 
     async def dispatch(message: aio_pika.abc.AbstractIncomingMessage) -> None:
         correlation_id = _extract_correlation_id(message)
-        context = (
-            bound_correlation_id(correlation_id) if correlation_id else nullcontext()
-        )
+        context = bound_correlation_id(correlation_id) if correlation_id else nullcontext()
         with context:
             try:
                 await handler(message)
@@ -87,9 +85,7 @@ def wrap_with_retry(
                     correlation_id=message.correlation_id,
                     type=message.type,
                 )
-                await channel.default_exchange.publish(
-                    retry_message, routing_key=retry_queue
-                )
+                await channel.default_exchange.publish(retry_message, routing_key=retry_queue)
                 await message.ack()
 
     return dispatch
