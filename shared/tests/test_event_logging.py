@@ -7,8 +7,8 @@ pins the contract so a future change to the helper's signature is caught.
 """
 
 import structlog
-from shared.contracts.order_events import OrderConfirmed
 
+from shared.contracts.order_events import OrderConfirmed
 from shared.observability.event_logging import log_event_received
 
 

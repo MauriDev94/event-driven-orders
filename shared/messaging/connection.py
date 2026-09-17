@@ -115,7 +115,5 @@ async def connect_with_retry(
             await sleep(delay)
         else:
             if attempt > 1:
-                logger.info(
-                    "%s: connected to broker after %d attempt(s)", service_name, attempt
-                )
+                logger.info("%s: connected to broker after %d attempt(s)", service_name, attempt)
             return True
