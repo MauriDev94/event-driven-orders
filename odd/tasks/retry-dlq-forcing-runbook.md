@@ -53,8 +53,13 @@ uv run --package shared ruff format --check shared/tests/integration/
   `.github/workflows/ci.yml`, con `-m "integration and not slow"` para que
   PRs ejecuten solo el escenario 2 (rápido). El escenario 1 y 3 quedan
   como promoción a `main` o a un workflow manual.
-- **El venv `.venv` se rompe entre sesiones Windows y WSL**: `uv` desde
-  WSL detecta el filesystem distinto y recrea el `.venv`, dejando el
-  estado de Windows inconsistente. Después de correr tests en WSL,
-  re-sync desde Windows con `Remove-Item .venv -Recurse -Force; uv sync
-  --package shared`.
+- **El `.venv` del workspace lo maneja WSL, no Windows.** Por el
+  bind-mount Windows-WSL, ambos lados ven el mismo `.venv` pero con
+  convenciones distintas (symlinks Linux como `lib64 -> lib` que
+  Windows no entiende). La regla es: **todas las operaciones de `uv`
+  sobre `.venv` se hacen desde WSL** — desde Windows solo se editan
+  archivos. Ver [ADR-0019](../docs/adr/0019-venv-gestionado-solo-desde-wsl.md).
+  Para lint/format desde Windows: `wsl bash -c "uv run --package shared
+  ruff check shared/"`. Si el `.venv` quedó inconsistente por una sesión
+  previa mal portada: `wsl bash -c "rm -rf .venv && uv sync
+  --package shared"`.

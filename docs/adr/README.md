@@ -52,6 +52,7 @@ Un ADR no se reescribe cuando la realidad cambia: se marca como `Superseded by A
 | [0008](0008-tests-contra-postgres-real.md) | Tests de integración contra PostgreSQL real, no SQLite | Aceptada |
 | [0017](0017-tests-e2e-solo-local-no-en-ci.md) | Los tests e2e corren solo en local, no en CI | Aceptada |
 | [0018](0018-idempotencia-no-se-verifica-e2e-black-box.md) | La idempotencia no se verifica con un test e2e black-box | Aceptada |
+| [0019](0019-venv-gestionado-solo-desde-wsl.md) | El venv del workspace se gestiona solo desde WSL, no desde Windows | Aceptada |
 | [0015](0015-build-context-en-la-raiz.md) | Build context en la raíz del repo y dependencias por servicio | Aceptada |
 
 ## Formato
