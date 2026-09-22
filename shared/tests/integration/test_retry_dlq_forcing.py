@@ -215,7 +215,97 @@ async def test_should_traverse_all_retry_stages_then_dead_letter(rabbitmq_url) -
         await connection.close()
 
 
+# ---------------------------------------------------------------------------
+# Scenario 3 (slow, ~35s): recovery - handler fails twice (transient) then
+# succeeds on the third attempt; the message is consumed exactly once.
+# ---------------------------------------------------------------------------
+
+
+class _RecoveryHandler:
+    """Async handler that raises on the first two calls and acks on the
+    third. Used to simulate a transient failure that the system recovers
+    from after the second retry.
+    """
+
+    def __init__(self) -> None:
+        self.calls = 0
+        self.success_body: bytes | None = None
+
+    async def __call__(self, message: aio_pika.abc.AbstractIncomingMessage) -> None:
+        self.calls += 1
+        if self.calls <= 2:
+            raise RuntimeError("forced transient failure (recovery test)")
+        self.success_body = message.body
+        await message.ack()
+
+
+@pytest.mark.slow
+async def test_should_consume_exactly_once_after_two_transient_failures(rabbitmq_url) -> None:
+    """A transient failure that the system recovers from after the second
+    retry. The dispatcher must:
+
+    1. Republish to ``<queue>.retry-5s`` on the first failure (TTL 5s).
+    2. Republish to ``<queue>.retry-30s`` on the second failure (TTL 30s).
+    3. Pass the third delivery through to the handler, which acks it.
+
+    The DLQ must remain empty: a successful consumption never dead-letters.
+    AsyncMock tests can verify the routing decisions in isolation; this
+    test verifies that a real broker actually delivers the recovered
+    message exactly once, three times in a row.
+    """
+    connection, channel = await _connect(rabbitmq_url)
+    try:
+        main_queue, dlq = await declare_forcing_topology(channel, _QUEUE_RECOVERY)
+
+        dlq_received, dlq_consumer_tag = await _spy_on(dlq)
+
+        handler = _RecoveryHandler()
+        dispatch = wrap_with_retry(handler, channel=channel, main_queue_name=_QUEUE_RECOVERY)
+
+        PUBLISHED_BODY = json.dumps({"order_id": "forcing-recovery-1"}).encode()
+        await channel.default_exchange.publish(
+            aio_pika.Message(
+                body=PUBLISHED_BODY,
+                content_type="application/json",
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                message_id="forcing-recovery-1",
+            ),
+            routing_key=_QUEUE_RECOVERY,
+        )
+
+        main_consumer_tag = await main_queue.consume(dispatch)
+
+        try:
+            # Wait long enough for both retry stages (5s + 30s) plus a
+            # buffer for the broker's bookkeeping on each handoff and
+            # the handler's third call. If anything reaches the DLQ the
+            # test fails immediately; if the handler succeeds the DLQ
+            # stays empty and we time out (which is the success path).
+            try:
+                unexpected_dlq_message = await asyncio.wait_for(dlq_received.get(), timeout=45.0)
+            except TimeoutError:
+                unexpected_dlq_message = None
+            assert unexpected_dlq_message is None, (
+                "Recovered message was incorrectly dead-lettered: "
+                f"body={unexpected_dlq_message.body!r}"
+            )
+
+            # The handler must have seen the message three times: initial
+            # delivery + retry-5s + retry-30s.
+            assert handler.calls == 3, (
+                f"Expected 3 handler invocations (initial + 2 retries), got {handler.calls}"
+            )
+            # The third (successful) call must carry the original body.
+            assert handler.success_body == PUBLISHED_BODY
+        finally:
+            await main_queue.cancel(main_consumer_tag)
+            await dlq.cancel(dlq_consumer_tag)
+    finally:
+        await connection.close()
+
+
 __all__ = [
+    "test_should_consume_exactly_once_after_two_transient_failures",
     "test_should_dead_letter_permanent_error_on_first_attempt",
     "test_should_traverse_all_retry_stages_then_dead_letter",
 ]
