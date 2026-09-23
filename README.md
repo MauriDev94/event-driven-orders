@@ -113,7 +113,7 @@ event-driven-orders/
 │   ├── contracts/               # integration events (Pydantic): BaseEvent + Order*/Stock*
 │   ├── messaging/                # retry policy + dispatcher (DLQ/backoff), reusado por los 3 servicios
 │   └── observability/            # logging JSON (structlog) + correlation id contextvars
-├── tests/e2e/                   # tests e2e contra el stack real (make e2e)
+├── e2e/                          # tests e2e contra el stack real (make e2e)
 └── services/
     ├── order-service/          # FastAPI: REST + consumer (feature: orders)
     ├── inventory-service/      # worker: consumer (feature: inventory)
@@ -257,13 +257,13 @@ cd services/order-service && pytest -q --cov=app
 
 > Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`.
 
-### Tests e2e (`tests/e2e/`)
+### Tests e2e (`e2e/`)
 
 Ejercitan el **stack real completo** (RabbitMQ + 2x Postgres + Mailhog + los 3 servicios), levantado con `make up` — sin mocks ni dependency overrides. Se observa el resultado solo a través de fronteras públicas: la API HTTP de `order-service` y la API de Mailhog (`/api/v2/messages`).
 
 ```bash
 make up        # levanta el stack completo
-make e2e        # instala deps de tests/e2e/ y corre pytest -m e2e
+make e2e        # instala deps de e2e/ y corre pytest -m e2e
 ```
 
 Cubren:

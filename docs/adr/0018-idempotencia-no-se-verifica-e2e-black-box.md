@@ -1,6 +1,6 @@
 # ADR-0018 — La idempotencia no se verifica con un test e2e black-box
 
-**Estado:** Aceptada · **Fecha:** 2026-06-11 · **Ámbito:** `tests/e2e/`
+**Estado:** Aceptada · **Fecha:** 2026-06-11 · **Ámbito:** `e2e/`
 
 ## Contexto
 

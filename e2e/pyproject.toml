@@ -14,7 +14,8 @@ build-backend = "hatchling.build"
 
 # e2e is a test-only suite with no installable runtime package. Include just
 # enough files in the wheel for it to be valid; the actual tests live at
-# tests/e2e/tests and are executed from the project root, not from the wheel.
+# the project root (e2e/test_order_flow.py) and are executed from there, not
+# from the wheel.
 [tool.hatch.build.targets.wheel]
 packages = ["."]
 exclude = ["tests/"]

@@ -16,7 +16,7 @@ Las salidas habituales son publicar `shared/` como paquete en un índice privado
 
 | Archivo | Contenido |
 |---|---|
-| `pyproject.toml` (raíz) | Workspace uv (`[tool.uv.workspace]` con `members = ["shared", "services/*", "tests/e2e"]`). **No tiene** `[project]` ni `[build-system]` — la raíz no es un paquete instalable. |
+| `pyproject.toml` (raíz) | Workspace uv (`[tool.uv.workspace]` con `members = ["shared", "services/*", "e2e"]`). **No tiene** `[project]` ni `[build-system]` — la raíz no es un paquete instalable. |
 | `services/<servicio>/pyproject.toml` y `shared/pyproject.toml` | Dependencias de runtime del miembro + `[dependency-groups].dev` (pytest, ruff, mypy) + **coverage gate** (`[tool.coverage.report] fail_under`) |
 | `uv.lock` | Resolución congelada del workspace completo; `uv sync --frozen` la lee para builds reproducibles (CI y Docker) |
 

@@ -56,4 +56,4 @@ format: ## Auto-format every service and the shared package with ruff
 	$(UV) run --package shared ruff format shared
 
 e2e: ## Run e2e tests against the real stack (requires `make up` first)
-	$(UV) run --package event-driven-orders-e2e pytest tests/e2e -q -m e2e
+	$(UV) run --package event-driven-orders-e2e pytest e2e -q -m e2e

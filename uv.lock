@@ -468,7 +468,7 @@ wheels = [
 [[package]]
 name = "event-driven-orders-e2e"
 version = "0.1.0"
-source = { editable = "tests/e2e" }
+source = { editable = "e2e" }
 
 [package.dev-dependencies]
 dev = [
