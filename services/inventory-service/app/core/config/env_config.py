@@ -8,13 +8,16 @@ class EnvConfig(BaseSettings):
     """
 
     # Broker
-    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+    # No credentials in the default: aio-pika falls back to RabbitMQ's
+    # default `guest` user.
+    rabbitmq_url: str = "amqp://localhost:5672/"
 
     # Database (database-per-service: this service owns the `inventory` DB)
     db_host: str = "localhost"
     db_port: int = 5432
     db_user: str = "inventory"
-    db_password: str = "inventory"
+    # Never a password literal in code; compose and CI always set it.
+    db_password: str = ""
     db_name: str = "inventory"
 
     model_config = SettingsConfigDict(

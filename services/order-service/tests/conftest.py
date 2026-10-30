@@ -68,7 +68,7 @@ def _build_db_url_from_env() -> str | None:
         host = os.getenv("db_host", "localhost")
         port = os.getenv("db_port", "5432")
         user = os.getenv("db_user", "orders")
-        password = os.getenv("db_password", "orders")
+        password = os.getenv("db_password", "")
         name = os.getenv("db_name", "orders")
         return f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{name}"
 
