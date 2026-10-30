@@ -8,7 +8,7 @@ They complement — but do not replace — the AsyncMock-based tests in
 isolation; these cover the actual AMQP behavior (TTL queues, dead-letter
 routing, headers surviving a real round-trip through the broker).
 
-Run from WSL with the venv that has Docker access (``.wsl-venv``):
+Requires a running Docker daemon (Docker Desktop on Windows, see ADR-0020):
 
     uv run --package shared pytest -m integration
 

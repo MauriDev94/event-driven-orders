@@ -15,8 +15,8 @@ Scenarios:
 - Scenario 3 (slow): recovery — handler fails twice (transient) then
   succeeds on the third attempt; the message is consumed exactly once.
 
-Run with ``pytest -m integration`` from WSL, or skip the slow ones with
-``pytest -m "integration and not slow"``.
+Run with ``pytest -m integration``, or skip the slow ones with
+``pytest -m "integration and not slow"``. Docker must be running.
 """
 
 from __future__ import annotations
