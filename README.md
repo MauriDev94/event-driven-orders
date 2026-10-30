@@ -6,8 +6,8 @@
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen)](.github/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688)](https://fastapi.tiangolo.com/)
-[![Coverage order-service](https://img.shields.io/badge/coverage%20order--service-92%25-brightgreen)](#testing)
-[![Coverage inventory-service](https://img.shields.io/badge/coverage%20inventory--service-88%25-brightgreen)](#testing)
+[![Coverage order-service](https://img.shields.io/badge/coverage%20order--service-93%25-brightgreen)](#testing)
+[![Coverage inventory-service](https://img.shields.io/badge/coverage%20inventory--service-90%25-brightgreen)](#testing)
 [![Coverage notification-service](https://img.shields.io/badge/coverage%20notification--service-96%25-brightgreen)](#testing)
 
 ---
@@ -255,8 +255,8 @@ cd services/order-service && pytest -q --cov=app
 
 | Servicio | Tests | Cobertura | Gate |
 |---|---|---|---|
-| `order-service` | 61 | ~92% | 85 |
-| `inventory-service` | 36 | ~88% | 80 |
+| `order-service` | 63 | ~93% | 85 |
+| `inventory-service` | 38 | ~90% | 80 |
 | `notification-service` | 36 | ~96% | 85 |
 | `shared` | 44 unit + 3 forcing | — | — |
 
