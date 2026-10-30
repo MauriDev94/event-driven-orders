@@ -6,9 +6,9 @@
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen)](.github/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-async-009688)](https://fastapi.tiangolo.com/)
-[![Coverage order-service](https://img.shields.io/badge/coverage%20order--service-91%25-brightgreen)](#testing)
-[![Coverage inventory-service](https://img.shields.io/badge/coverage%20inventory--service-85%25-brightgreen)](#testing)
-[![Coverage notification-service](https://img.shields.io/badge/coverage%20notification--service-92%25-brightgreen)](#testing)
+[![Coverage order-service](https://img.shields.io/badge/coverage%20order--service-92%25-brightgreen)](#testing)
+[![Coverage inventory-service](https://img.shields.io/badge/coverage%20inventory--service-88%25-brightgreen)](#testing)
+[![Coverage notification-service](https://img.shields.io/badge/coverage%20notification--service-96%25-brightgreen)](#testing)
 
 ---
 
@@ -237,7 +237,7 @@ make install                     # = uv sync: crea .venv e instala runtime + dev
 source .venv/Scripts/activate    # Windows (Git Bash) — Unix: .venv/bin/activate
 ```
 
-uv nativo del sistema operativo + Docker Desktop (o Docker nativo en Linux); `.python-version` fija Python 3.12 como en CI. En Windows, sin `make`, el equivalente es `uv sync --all-packages` ([ADR-0020](docs/adr/0020-venv-nativo-con-docker-desktop.md)).
+uv nativo del sistema operativo + Docker Desktop (o Docker nativo en Linux); `.python-version` fija Python 3.12 como en CI. En Windows, `make` se instala con `winget install ezwinports.make` y corre desde Git Bash; sin él, el equivalente de `make install` es `uv sync --all-packages` ([ADR-0020](docs/adr/0020-venv-nativo-con-docker-desktop.md)).
 
 ### Unit + integración (TDD)
 
@@ -255,12 +255,12 @@ cd services/order-service && pytest -q --cov=app
 
 | Servicio | Tests | Cobertura | Gate |
 |---|---|---|---|
-| `order-service` | 55+ | ~92% | 85 |
-| `inventory-service` | 29+ | ~85% | 40 |
-| `notification-service` | 31+ | ~92% | 85 |
-| `shared` | 23+ | — | — |
+| `order-service` | 61 | ~92% | 85 |
+| `inventory-service` | 36 | ~88% | 80 |
+| `notification-service` | 36 | ~96% | 85 |
+| `shared` | 44 unit + 3 forcing | — | — |
 
-> Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`.
+> Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`. Los tests de `/health` también usan esa base: el fixture `client` reemplaza la sesión de `get_db_session`, así que nunca le pegan a la base configurada en `localhost`.
 
 ### Forcing de retry/DLQ contra RabbitMQ real (`shared/tests/integration/`)
 
@@ -296,6 +296,8 @@ Cubren:
 
 Ambos usan **polling con timeout** (`wait_until`, sin `sleep` fijos) porque la propagación entre servicios es asíncrona. Marcados `@pytest.mark.e2e`.
 
+Antes del primer test, la suite espera a que los 3 `/health` reporten la base y el broker sanos. Un 200 no alcanza, porque `/health` responde 200 con el broker caído ([ADR-0014](docs/adr/0014-health-siempre-200.md)): con el stack recién levantado, un consumer que todavía se está conectando no tiene su cola, y el exchange descarta los eventos que llegan antes.
+
 Dos decisiones sobre el **alcance** de esta suite están registradas como ADR:
 
 - **[ADR-0017](docs/adr/0017-tests-e2e-solo-local-no-en-ci.md) — los e2e corren solo en local, no en CI.** Levantar y *buildear* 5 contenedores en cada push haría el pipeline lento y más flaky, sin aportar señal sobre un PR individual que los gates por servicio (`quality` + `tests-db`/`tests`) no den antes. `make e2e` queda como verificación pre-PR / smoke test de release.
@@ -310,8 +312,9 @@ automático):
   al host, `restart: always`, agrega `caddy`).
 - `deploy/Caddyfile`: reverse proxy — `order-service` público, RabbitMQ
   Management UI y Mailhog UI detrás de basic auth.
-- `deploy/env.production.example`: variables de entorno de producción (copiar
-  a `.env.production`).
+- `deploy/env.production.example`: plantilla de producción, sin contraseñas.
+  `python3 scripts/generate_env.py --template deploy/env.production.example
+  --output .env.production` la copia con contraseñas aleatorias.
 - `deploy/deploy.sh`: re-deploy idempotente (`git pull` + `up -d --build`).
 
 ```bash
@@ -331,11 +334,12 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 | `tests-broker` | El forcing test rápido de retry/DLQ contra un **RabbitMQ real** (testcontainers en el Docker del runner) |
 | `tests-db` (matrix: order, inventory) | `pytest` con cobertura sobre un **Postgres 16** efímero (service container con healthcheck `pg_isready`) |
 | `tests` (notification) | `pytest` con cobertura, sin DB |
+| `build-images` | Construye las 3 imágenes con `docker compose build` y verifica que `shared.*` y `app.main` se importen dentro de cada una |
 
-- **Python 3.12** con cache de `pip` por servicio. `actions/checkout@v4`, `actions/setup-python@v5`, `actions/upload-artifact@v4`.
-- **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` y `notification-service` están en **85**; `inventory` sigue en **40** (piso post-scaffold).
+- **Python 3.12** instalado por uv (`astral-sh/setup-uv@v4`, versión fija); cada job sincroniza solo su paquete del workspace con `uv sync --frozen`. `actions/checkout@v4`, `actions/upload-artifact@v4`.
+- **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` y `notification-service` están en **85**; `inventory-service` en **80**.
 - El `coverage.xml` de cada servicio se sube como artefacto (`coverage-<servicio>`).
-- **Secret opcional `CI_DB_PASSWORD`:** password del Postgres de CI. Si no está seteado, el workflow usa un valor descartable para que el CI quede verde sin configuración manual.
+- **Sin contraseñas en CI:** el Postgres de `tests-db` usa `POSTGRES_HOST_AUTH_METHOD: trust` (es desechable y solo lo alcanza ese job), y `build-images` genera el entorno de compose con `scripts/generate_env.py`.
 - Los **tests e2e no corren en CI** ([ADR-0017](docs/adr/0017-tests-e2e-solo-local-no-en-ci.md)).
 
 ---

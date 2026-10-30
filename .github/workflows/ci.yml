@@ -151,10 +151,10 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Tests for the services that own a database (order, inventory). Each gets a
-  # throwaway Postgres 16 service container with a pg_isready healthcheck. The
-  # app reads db_* from the environment (pydantic-settings), so the health
-  # check can reach a real DB. Coverage gate lives in each pyproject.toml
-  # (fail_under = 40, a post-scaffold floor — TODO subir a 85).
+  # throwaway Postgres 16 service container with a pg_isready healthcheck. With
+  # CI set, the conftest builds its DB URL from the db_* variables below
+  # instead of starting a testcontainer. Coverage gate lives in each
+  # pyproject.toml (fail_under: order 85, inventory 80).
   # ---------------------------------------------------------------------------
   tests-db:
     name: Tests (${{ matrix.service }})
