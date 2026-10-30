@@ -19,6 +19,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
+from typing import cast
 
 import aio_pika
 
@@ -52,7 +53,9 @@ def wrap_with_retry(
                 await handler(message)
             except Exception as exc:  # noqa: BLE001 - classified below
                 headers = dict(message.headers or {})
-                retry_count = int(headers.get(RETRY_COUNT_HEADER, 0))
+                # This dispatcher writes the header as an int; a message
+                # republished by hand (e.g. from the management UI) carries a str.
+                retry_count = int(cast(int | str, headers.get(RETRY_COUNT_HEADER, 0)))
                 decision = decide_retry(retry_count, classify_exception(exc))
 
                 if decision.action is RetryAction.DEAD_LETTER:

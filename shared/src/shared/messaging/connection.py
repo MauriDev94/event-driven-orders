@@ -55,7 +55,11 @@ class RabbitMQConnection:
             await connection.close()
             raise
         self._connection = connection
-        self._channel = await connection.channel()
+        # Awaited apart: aio-pika types ``await channel`` as the base
+        # AbstractChannel, while ``channel()`` returns the robust one.
+        channel = connection.channel()
+        await channel
+        self._channel = channel
 
     async def close(self) -> None:
         """Close the connection if open."""
