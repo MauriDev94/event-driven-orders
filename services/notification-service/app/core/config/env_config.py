@@ -9,7 +9,9 @@ class EnvConfig(BaseSettings):
     """
 
     # Broker
-    rabbitmq_url: str = "amqp://guest:guest@localhost:5672/"
+    # No credentials in the default: aio-pika falls back to RabbitMQ's
+    # default `guest` user.
+    rabbitmq_url: str = "amqp://localhost:5672/"
 
     # SMTP (Mailhog locally)
     smtp_host: str = "localhost"
