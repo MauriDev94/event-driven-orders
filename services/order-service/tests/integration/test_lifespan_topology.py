@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -91,3 +91,15 @@ def test_should_spawn_watchdog_and_recover_when_broker_unreachable_at_startup(
     assert connect_with_retry_mock.await_count == 2
     declare_spy.assert_awaited_once_with("fake-channel")
     assert response.json()["broker"] == "unhealthy"
+
+
+def test_should_dispose_the_engine_pool_on_shutdown(monkeypatch) -> None:
+    database = Mock()
+    monkeypatch.setattr(main_module, "RabbitMQConnection", _FakeBroker)
+    monkeypatch.setattr(main_module, "declare_topology", AsyncMock())
+    monkeypatch.setattr(main_module, "get_database", lambda: database)
+
+    with TestClient(app):
+        database.engine.dispose.assert_not_called()
+
+    database.engine.dispose.assert_called_once_with()
