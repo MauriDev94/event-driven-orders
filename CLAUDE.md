@@ -17,14 +17,16 @@ README, ADRs, commits, PRs and issues are in Spanish; code, comments and docstri
 
 - **ADR-0020: the single root `.venv/` (uv workspace) is owned by native Windows uv.** Run `uv` directly from PowerShell or Git Bash. Never run `uv` against this `.venv/` from WSL: a venv written by both sides breaks (ADR-0019, now superseded, has the history).
 - `.python-version` pins 3.12 to match CI and the Dockerfiles; don't drop it or uv picks the newest interpreter on the machine.
-- `make` is not installed on Windows; run the `uv` commands the Makefile wraps (below).
+- `make` (GNU Make 4.4, `winget install ezwinports.make`) runs from Git Bash. A shell opened before the install doesn't have it in `PATH`.
+- `.env` is generated, never copied by hand: `make env` (`scripts/generate_env.py`) fills every empty `*_PASS` / `*_PASSWORD` of `.env.example` with a random value, and compose refuses to start when one is missing (`${VAR:?}`). No password gets a value in `.env.example`, compose, CI or code: CI's Postgres uses trust auth and `build-images` runs the same script. Regenerating needs `docker compose down -v`, because Postgres and Grafana keep the password their volume was created with. Keep the compose guards as a bare `${VAR:?}`: with an error message after the `?`, GitGuardian's generic password detector reads the line as a literal (it flagged PR #48), and it scans every commit of a PR, so a later fix commit doesn't clear it.
+- A global hook blocks any shell command whose text contains `.env` (except `.env.example`), even inside a heredoc or a Python string. Put such edits in a script file and run it, and never print a generated value.
 - Most test runs need Docker Desktop running: service DB tests start a `postgres:16-alpine` testcontainer (unless `CI` or `TEST_DB_URL` is set), and `shared/tests/integration/` starts a RabbitMQ testcontainer.
 - The `client` / `api_client` fixtures run the real lifespan with `app.main.connect_with_retry` replaced by a broker-down double, so service suites never open a socket to RabbitMQ, not even with `make up` running. Don't drop it: on Windows a refused TCP connect takes ~2 s, so the real backoff costs ~35 s per test. Tests of the lifespan's broker logic patch `RabbitMQConnection` / `connect_with_retry` themselves (`test_lifespan_*.py`).
 
 ## Commands
 
 ```bash
-cp .env.example .env && make up   # RabbitMQ, 2x Postgres, Mailhog, 3 services, Prometheus, Grafana
+make env && make up               # .env with random passwords, then RabbitMQ, 2x Postgres, Mailhog, 3 services, Prometheus, Grafana
 make ps / make logs / make down
 uv sync --all-packages            # every workspace member + dev groups (CI adds --frozen)
 make lint                         # per service: ruff check, ruff format --check, mypy app; shared: same, with mypy src

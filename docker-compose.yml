@@ -4,6 +4,11 @@
 # Build context is the REPO ROOT for every service (not the service folder) so
 # that the shared `shared/contracts/` package is available inside each image.
 # Each service points to its own Dockerfile via `build.dockerfile`.
+#
+# Users, ports and secrets come from `.env` (`make env` writes it from
+# `.env.example` with random passwords). `${VAR:?}` makes compose refuse to
+# start when a password is missing, instead of booting a broker or DB without
+# one: run `make env` first.
 # ----------------------------------------------------------------------------
 
 services:
@@ -14,7 +19,7 @@ services:
     restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?}
     ports:
       - "5672:5672"    # AMQP
       - "15672:15672"  # Management UI
@@ -36,7 +41,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${ORDERS_DB_USER}
-      POSTGRES_PASSWORD: ${ORDERS_DB_PASSWORD}
+      POSTGRES_PASSWORD: ${ORDERS_DB_PASSWORD:?}
       POSTGRES_DB: ${ORDERS_DB_NAME}
     ports:
       - "${ORDERS_DB_PORT}:5432"
@@ -57,7 +62,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${INVENTORY_DB_USER}
-      POSTGRES_PASSWORD: ${INVENTORY_DB_PASSWORD}
+      POSTGRES_PASSWORD: ${INVENTORY_DB_PASSWORD:?}
       POSTGRES_DB: ${INVENTORY_DB_NAME}
     ports:
       - "${INVENTORY_DB_PORT}:5432"
@@ -90,7 +95,7 @@ services:
     container_name: edo_order_service
     restart: unless-stopped
     environment:
-      RABBITMQ_URL: ${RABBITMQ_URL}
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/
       DB_HOST: postgres-orders
       DB_PORT: 5432
       DB_USER: ${ORDERS_DB_USER}
@@ -113,7 +118,7 @@ services:
     container_name: edo_inventory_service
     restart: unless-stopped
     environment:
-      RABBITMQ_URL: ${RABBITMQ_URL}
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/
       DB_HOST: postgres-inventory
       DB_PORT: 5432
       DB_USER: ${INVENTORY_DB_USER}
@@ -136,7 +141,7 @@ services:
     container_name: edo_notification_service
     restart: unless-stopped
     environment:
-      RABBITMQ_URL: ${RABBITMQ_URL}
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
       SMTP_SENDER_EMAIL: ${SMTP_SENDER_EMAIL}
@@ -176,7 +181,7 @@ services:
       - ./infra/grafana/provisioning:/etc/grafana/provisioning:ro
       - grafana_data:/var/lib/grafana
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?}
       GF_USERS_ALLOW_SIGN_UP: "false"
     networks:
       - edo_net
