@@ -19,7 +19,7 @@ README, ADRs, commits, PRs and issues are in Spanish; code, comments and docstri
 - `.python-version` pins 3.12 to match CI and the Dockerfiles; don't drop it or uv picks the newest interpreter on the machine.
 - `make` is not installed on Windows; run the `uv` commands the Makefile wraps (below).
 - Most test runs need Docker Desktop running: service DB tests start a `postgres:16-alpine` testcontainer (unless `CI` or `TEST_DB_URL` is set), and `shared/tests/integration/` starts a RabbitMQ testcontainer.
-- Tests that boot the real lifespan without a broker (`client` / `api_client` fixtures) take ~35 s each on Windows: `connect_with_retry`'s backoff plus ~2 s per refused TCP connect (instant on Linux). Until the `RabbitMQConnection.connect()` cleanup fix lands (`docs/roadmap.md`, paso 0), they also hang forever at the first `TestClient` teardown, so run `tests/unit` or a specific file rather than a whole service suite.
+- The `client` / `api_client` fixtures run the real lifespan with `app.main.connect_with_retry` replaced by a broker-down double, so service suites never open a socket to RabbitMQ, not even with `make up` running. Don't drop it: on Windows a refused TCP connect takes ~2 s, so the real backoff costs ~35 s per test. Tests of the lifespan's broker logic patch `RabbitMQConnection` / `connect_with_retry` themselves (`test_lifespan_*.py`).
 
 ## Commands
 
