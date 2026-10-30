@@ -19,6 +19,7 @@ Unit tests (pure use-case tests with fake repos) do **not** depend on the DB
 fixtures and run independently in both environments.
 """
 
+import asyncio
 import os
 from collections.abc import Callable, Generator
 from decimal import Decimal
@@ -31,6 +32,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
+import app.main as main_module
 from app.core.data.source.local.sql_alchemy_base import SqlAlchemyBase
 from app.core.providers.db import get_db_session
 from app.features.orders.application.contracts.event_publisher import EventPublisher
@@ -203,22 +205,36 @@ def spy_publisher() -> SpyEventPublisher:
 # ---------------------------------------------------------------------------
 
 
+async def _connect_with_retry_broker_down(connect, *, service_name, max_attempts=5, **_kwargs):
+    """Stand-in for ``connect_with_retry`` with the broker down, without the
+    real backoff or network: the lifespan's bounded retry gives up at once
+    and the watchdog (``max_attempts=None``) waits until shutdown cancels it.
+    It also keeps these tests off a broker that happens to be running
+    locally (``make up``)."""
+    if max_attempts is None:
+        await asyncio.Event().wait()
+    return False
+
+
 @pytest.fixture
-def client() -> TestClient:
-    """FastAPI test client that runs the app lifespan (broker connect is
-    resilient, so this works without infrastructure)."""
+def client(monkeypatch) -> TestClient:
+    """FastAPI test client that runs the app lifespan with the broker down
+    (the lifespan is resilient to that, so no infrastructure is needed)."""
+    monkeypatch.setattr(main_module, "connect_with_retry", _connect_with_retry_broker_down)
     with TestClient(app) as test_client:
         yield test_client
 
 
 @pytest.fixture
-def api_client(session_factory, spy_publisher):
+def api_client(session_factory, spy_publisher, monkeypatch):
     """Test client with the DB and broker boundaries replaced by fakes.
 
     Uses real Postgres (session_factory) and a spy publisher — exercising
     the full HTTP → use case → repo path without a live broker.
     """
     from app.features.orders.di.dependencies import get_event_publisher
+
+    monkeypatch.setattr(main_module, "connect_with_retry", _connect_with_retry_broker_down)
 
     def override_get_db():
         session = session_factory()
