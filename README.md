@@ -125,19 +125,21 @@ Cada servicio: `app/{core,common,features/<feature>/{domain,application,infrastr
 ## Puesta en marcha
 
 ```bash
-cp .env.example .env
+make env       # crea .env con contraseñas aleatorias (una sola vez)
 make up        # docker compose up -d --build
 make ps        # ver healthchecks
 make logs      # seguir logs
 make down      # detener
 ```
 
+`make env` copia `.env.example` a `.env` y llena cada contraseña vacía (RabbitMQ, las dos bases y Grafana) con un valor aleatorio. `.env` no se versiona, y `docker compose` no arranca si falta alguna contraseña. Si lo regeneras con `--force`, corre `docker compose down -v`: Postgres y Grafana guardan la contraseña con la que se creó su volumen.
+
 | Servicio / infra | URL local |
 |---|---|
 | order-service `/health` | http://localhost:8001/health |
 | inventory-service `/health` | http://localhost:8002/health |
 | notification-service `/health` | http://localhost:8003/health |
-| RabbitMQ Management | http://localhost:15672 (guest/guest) |
+| RabbitMQ Management | http://localhost:15672 (usuario `guest`, contraseña `RABBITMQ_DEFAULT_PASS` de tu `.env`) |
 | Mailhog UI | http://localhost:8025 |
 | Postgres orders / inventory | localhost:5433 / localhost:5434 |
 
@@ -218,7 +220,7 @@ La orden termina en `status: "rejected"` y llega un email "Your order `<order_id
 
 ### Inspeccionar DLQ y trazas
 
-- **RabbitMQ Management** (`guest`/`guest`): pestaña *Queues*, buscar `<service>.<queue>.dlq` o `.retry-5s/30s/2m`.
+- **RabbitMQ Management** (usuario `guest`, contraseña en tu `.env`): pestaña *Queues*, buscar `<service>.<queue>.dlq` o `.retry-5s/30s/2m`.
 - **Logs por correlation ID**:
   ```bash
   docker compose logs order-service inventory-service notification-service --no-color \
@@ -399,7 +401,7 @@ docker compose up -d prometheus grafana
 ```
 
 - **Prometheus**: <http://localhost:9090>
-- **Grafana**: <http://localhost:3000> (user: `admin` / pass: `admin`)
+- **Grafana**: <http://localhost:3000> (usuario `admin`, contraseña `GRAFANA_ADMIN_PASSWORD` de tu `.env`)
 
 El dashboard **Event-Driven Orders** carga automáticamente al iniciar Grafana (provisioning). Incluye paneles para throughput, latencia p95, DLQ, reintentos y profundidad de colas RabbitMQ.
 
