@@ -103,11 +103,12 @@ Domain entities raise `ValueError` on invariant violations (for example, confirm
 - **Idempotency** (ADR-0006): order and inventory insert the incoming `event_id` into `processed_events` (`INSERT ... ON CONFLICT DO NOTHING`) in the same Unit of Work as the business change, and a duplicate is ACKed with no side effects. notification-service uses `InMemoryEventDeduplicator`, which is lost on restart (ADR-0009).
 - **Atomic stock reservation** (ADR-0007): a conditional `UPDATE ... WHERE available_quantity >= :qty` per line inside a `SAVEPOINT`, all-or-nothing. A rejection still commits the `processed_events` row.
 - These depend on Postgres semantics, so DB tests run against real Postgres, never SQLite (ADR-0008).
+- **One engine per process**: sessions come from `get_database()` (`lru_cache`), shared by the routers, `/health` and the consumer. Building a `Database` per call opens a connection per request and leaks idle ones on error paths.
 - **Correlation id** (ADR-0012): the order-service middleware binds `X-Correlation-ID` (or a new UUID) to structlog contextvars, the mappers copy it into each event, and `wrap_with_retry` re-binds it from the message body on the consumer side.
 
 ### Persistence, build and deploy
 
-- Alembic lives in `app/core/data/source/local/alembic/`, and each container runs `alembic upgrade head` before uvicorn (ADR-0016). Run `alembic` from the service directory, because `alembic.ini` uses a relative path. Inventory's first migration seeds `SKU-001`…`SKU-005` (stock 100/50/25/10/5); the e2e tests and README examples depend on them.
+- Alembic lives in `app/core/data/source/local/alembic/`, and each container runs `alembic upgrade head` before uvicorn (ADR-0016), with `exec uvicorn` so uvicorn is PID 1 and gets SIGTERM (`sh` doesn't forward it, and the lifespan shutdown would never run). Run `alembic` from the service directory, because `alembic.ini` uses a relative path. Inventory's first migration seeds `SKU-001`…`SKU-005` (stock 100/50/25/10/5); the e2e tests and README examples depend on them.
 - The Docker build context is the repo root (ADR-0015). Each Dockerfile copies `pyproject.toml`, `uv.lock`, `shared/` and its own service directory, then runs `uv sync --frozen --no-dev --package <svc>`. A new runtime file must not be excluded by the root `.dockerignore`; CI's `build-images` job smoke-imports `shared.*` and `app.main` in every image.
 - Production uses the `docker-compose.prod.yml` override plus Caddy (`deploy/Caddyfile`), with env in `.env.production` (template: `deploy/env.production.example`). `DEPLOY.md` is local-only and gitignored.
 

@@ -42,5 +42,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # start the API. depends_on waits for Postgres to be healthy in compose.
 # Run alembic from the service directory because it reads alembic.ini from
 # cwd (the relative path in the config is `app/core/data/source/local/alembic/`).
+# `exec` makes uvicorn PID 1: `sh` doesn't forward SIGTERM, so without it
+# `docker compose stop` ends in SIGKILL and the lifespan shutdown (broker
+# close, engine dispose) never runs.
 WORKDIR /app/services/order-service
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

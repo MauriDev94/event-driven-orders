@@ -40,5 +40,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 
 # Apply pending migrations (products + processed_events must exist before
 # the consumer starts), then start the worker.
+# `exec` makes uvicorn PID 1: `sh` doesn't forward SIGTERM, so without it
+# `docker compose stop` ends in SIGKILL and the lifespan shutdown (broker
+# close, engine dispose) never runs.
 WORKDIR /app/services/inventory-service
-CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]

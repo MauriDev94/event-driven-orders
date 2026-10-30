@@ -9,13 +9,12 @@ from shared.messaging.connection import RabbitMQConnection, connect_with_retry
 from shared.messaging.retry_dispatcher import wrap_with_retry
 from shared.observability.config import configure_logging
 from sqlalchemy import text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
-from app.core.config.env_config import EnvConfig
 from app.core.exceptions.error_handling import register_exception_handlers
 from app.core.messaging.topology import ORDER_RESULTS_QUEUE, declare_topology
 from app.core.middleware.correlation_id import correlation_id_middleware
-from app.core.providers.db import get_db_session
+from app.core.providers.db import get_database, get_db_session
 from app.core.providers.env_config import get_env_config
 from app.features.orders.application.usecases.confirm_order_use_case import ConfirmOrder
 from app.features.orders.application.usecases.reject_order_use_case import RejectOrder
@@ -56,25 +55,27 @@ async def lifespan(app: FastAPI):
     app.state.broker_watchdog = None
 
     if await connect_with_retry(broker.connect, service_name=SERVICE_NAME):
-        await _start_consuming(app, broker, config)
+        await _start_consuming(app, broker)
     else:
-        app.state.broker_watchdog = asyncio.create_task(_reconnect_and_start(app, broker, config))
+        app.state.broker_watchdog = asyncio.create_task(_reconnect_and_start(app, broker))
 
     yield
 
     if app.state.broker_watchdog is not None:
         app.state.broker_watchdog.cancel()
     await broker.close()
+    # Close the pooled connections instead of leaving them to the process exit.
+    get_database().engine.dispose()
 
 
-async def _reconnect_and_start(app: FastAPI, broker: RabbitMQConnection, config: EnvConfig) -> None:
+async def _reconnect_and_start(app: FastAPI, broker: RabbitMQConnection) -> None:
     """Background watchdog: keep retrying the initial connection forever
     (capped backoff) and finish startup once it succeeds."""
     await connect_with_retry(broker.connect, service_name=SERVICE_NAME, max_attempts=None)
-    await _start_consuming(app, broker, config)
+    await _start_consuming(app, broker)
 
 
-async def _start_consuming(app: FastAPI, broker: RabbitMQConnection, config: EnvConfig) -> None:
+async def _start_consuming(app: FastAPI, broker: RabbitMQConnection) -> None:
     """Declare topology and start consuming inventory results. Any failure
     here is logged and leaves the service in degraded mode rather than
     crashing the process."""
@@ -82,7 +83,7 @@ async def _start_consuming(app: FastAPI, broker: RabbitMQConnection, config: Env
         await declare_topology(broker.channel)
 
         publisher = AioPikaEventPublisher(broker)
-        db = _build_session_factory(config)
+        db = get_database().session
         confirm_uc = ConfirmOrder(SqlAlchemyOrderUnitOfWork(db), publisher)
         reject_uc = RejectOrder(SqlAlchemyOrderUnitOfWork(db), publisher)
         handler = build_inventory_result_handler(confirm_uc, reject_uc)
@@ -95,12 +96,6 @@ async def _start_consuming(app: FastAPI, broker: RabbitMQConnection, config: Env
         logger.info("%s connected to broker and consuming inventory results", SERVICE_NAME)
     except Exception as exc:  # noqa: BLE001 - startup must stay resilient
         logger.warning("%s could not start consuming from broker: %s", SERVICE_NAME, exc)
-
-
-def _build_session_factory(config: EnvConfig) -> sessionmaker:  # type: ignore[type-arg]
-    from app.core.data.source.local.database import Database
-
-    return Database(config).session
 
 
 configure_logging(SERVICE_NAME)
