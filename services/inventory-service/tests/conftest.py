@@ -32,6 +32,7 @@ from sqlalchemy.pool import NullPool
 
 import app.main as main_module
 from app.core.data.source.local.sql_alchemy_base import SqlAlchemyBase
+from app.core.providers.db import get_db_session
 from app.features.inventory.application.contracts.event_publisher import EventPublisher
 from app.features.inventory.application.contracts.unit_of_work import UnitOfWork
 from app.features.inventory.infrastructure.models import (  # noqa: F401 - register tables
@@ -191,7 +192,25 @@ async def _connect_with_retry_broker_down(connect, *, service_name, max_attempts
 
 
 @pytest.fixture
-def client(monkeypatch) -> TestClient:
+def db_session_override(session_factory) -> Generator[None, None, None]:
+    """Route ``get_db_session`` (used by ``/health``) to the test Postgres
+    instead of the configured ``localhost`` database, which on Windows costs
+    ~4 s per refused connect."""
+
+    def override_get_db():
+        session = session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db_session] = override_get_db
+    yield
+    app.dependency_overrides.pop(get_db_session, None)
+
+
+@pytest.fixture
+def client(db_session_override, monkeypatch) -> TestClient:
     monkeypatch.setattr(main_module, "connect_with_retry", _connect_with_retry_broker_down)
     with TestClient(app) as test_client:
         yield test_client

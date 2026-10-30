@@ -1,14 +1,15 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
+from typing import Annotated
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from prometheus_fastapi_instrumentator import Instrumentator
 from shared.messaging.connection import RabbitMQConnection, connect_with_retry
 from shared.messaging.retry_dispatcher import wrap_with_retry
 from shared.observability.config import configure_logging
 from sqlalchemy import text
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config.env_config import EnvConfig
 from app.core.exceptions.error_handling import register_exception_handlers
@@ -109,12 +110,14 @@ register_exception_handlers(app)
 
 
 @app.get("/health", tags=["health"])
-async def health() -> dict[str, str]:
-    """Deep health check: database + broker. Always returns 200."""
+async def health(session: Annotated[Session, Depends(get_db_session)]) -> dict[str, str]:
+    """Deep health check: database + broker. Always returns 200.
+
+    The session comes from a dependency, so FastAPI closes it after the
+    response and tests can override it.
+    """
     db_status = "healthy"
     try:
-        session_gen = get_db_session()
-        session = next(session_gen)
         session.execute(text("SELECT 1"))
     except Exception:  # noqa: BLE001 - health must never raise
         db_status = "unhealthy"
