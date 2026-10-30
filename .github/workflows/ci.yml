@@ -177,9 +177,9 @@ jobs:
         env:
           POSTGRES_DB: ${{ matrix.db_name }}
           POSTGRES_USER: ${{ matrix.db_user }}
-          # Optional repo secret; falls back to a throwaway value so CI is green
-          # without manual setup. Set CI_DB_PASSWORD in repo settings to override.
-          POSTGRES_PASSWORD: ${{ secrets.CI_DB_PASSWORD || 'ci-postgres-pwd' }}
+          # Throwaway DB reachable only from this job: with trust auth no
+          # password exists anywhere, so none can leak.
+          POSTGRES_HOST_AUTH_METHOD: trust
         ports:
           - 5432:5432
         options: >-
@@ -196,7 +196,7 @@ jobs:
       db_host: localhost
       db_port: "5432"
       db_user: ${{ matrix.db_user }}
-      db_password: ${{ secrets.CI_DB_PASSWORD || 'ci-postgres-pwd' }}
+      db_password: ""
       db_name: ${{ matrix.db_name }}
 
     steps:
@@ -293,9 +293,9 @@ jobs:
 
       - name: Provide compose environment
         # docker-compose.yml interpolates ${...} into `environment:` and
-        # `ports:`. The committed example carries local dev defaults only —
-        # no secret is involved, and the containers never actually start.
-        run: cp .env.example .env
+        # `ports:`, and refuses to run without the passwords. Same script as
+        # `make env`: throwaway random secrets; the containers never start.
+        run: python3 scripts/generate_env.py
 
       - name: Build service images
         run: docker compose build order-service inventory-service notification-service
