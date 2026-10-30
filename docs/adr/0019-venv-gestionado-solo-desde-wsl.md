@@ -1,6 +1,6 @@
 # ADR-0019 — El venv del workspace se gestiona solo desde WSL, no desde Windows
 
-**Estado:** Aceptada · **Fecha:** 2026-09-22 · **Ámbito:** `.venv/` (workspace venv de uv), flujo de desarrollo local en máquinas Windows
+**Estado:** Superseded by [ADR-0020](0020-venv-nativo-con-docker-desktop.md) · **Fecha:** 2026-09-22 · **Ámbito:** `.venv/` (workspace venv de uv), flujo de desarrollo local en máquinas Windows
 
 ## Contexto
 
