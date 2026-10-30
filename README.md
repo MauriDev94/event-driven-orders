@@ -74,7 +74,7 @@ sequenceDiagram
 | Validación / contratos | Pydantic v2 |
 | Email (dev) | Mailhog (SMTP + API de inspección) |
 | Observabilidad | `structlog` (logging JSON) + correlation ID por contexto |
-| Testing | pytest, pytest-asyncio, `testcontainers` (Postgres real), httpx |
+| Testing | pytest, pytest-asyncio, `testcontainers` (Postgres y RabbitMQ reales), httpx |
 | Lint / types | ruff + mypy |
 | Infra | Docker Compose |
 | CI/CD | GitHub Actions |
@@ -231,9 +231,11 @@ La orden termina en `status: "rejected"` y llega un email "Your order `<order_id
 ### Entorno de desarrollo local (venv compartido)
 
 ```bash
-make install                     # crea .venv e instala runtime + dev de los 3 servicios
+make install                     # = uv sync: crea .venv e instala runtime + dev de todo el workspace
 source .venv/Scripts/activate    # Windows (Git Bash) — Unix: .venv/bin/activate
 ```
+
+uv nativo del sistema operativo + Docker Desktop (o Docker nativo en Linux); `.python-version` fija Python 3.12 como en CI. En Windows, sin `make`, el equivalente es `uv sync --all-packages` ([ADR-0020](docs/adr/0020-venv-nativo-con-docker-desktop.md)).
 
 ### Unit + integración (TDD)
 
@@ -256,6 +258,24 @@ cd services/order-service && pytest -q --cov=app
 | `shared` | 23+ | — | — |
 
 > Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`.
+
+### Forcing de retry/DLQ contra RabbitMQ real (`shared/tests/integration/`)
+
+Los tests del dispatcher usan `AsyncMock`, así que no ven la **topología AMQP**: un typo en `x-message-ttl`, un dead-letter mal enrutado o un header que se pierde al republicar pasarían igual. Estos tests levantan un `rabbitmq:3.13-management` real con `testcontainers` y recorren el flujo completo a través de `wrap_with_retry`:
+
+| Escenario | Qué verifica | Markers | Duración aprox. |
+|---|---|---|---|
+| Fallo permanente | Un body con JSON inválido va directo a la DLQ, sin pasar por las retry queues | `integration` | segundos, más el arranque del contenedor |
+| Traversal completo | Un handler que siempre falla recorre `retry-5s` -> `retry-30s` -> `retry-2m` y termina en la DLQ con `x-retry-count = 3` | `integration`, `slow` | ~2,5 min de TTLs reales |
+| Recuperación | Dos fallos transitorios y el tercer intento procesa el mensaje una sola vez, sin nada en la DLQ | `integration`, `slow` | ~35 s de TTLs reales |
+
+```bash
+cd shared
+uv run --package shared pytest -m "integration and not slow" tests/integration/   # solo el rápido
+uv run --package shared pytest -m integration tests/integration/                  # los 3 (~4,5 min)
+```
+
+El contenedor se levanta una vez por sesión y lo comparten los 3 tests. El fixture reemplaza el readiness probe de `RabbitMqContainer`, que usa `pika` y se cuelga en el handshake con RabbitMQ 3.13, por un `aio_pika.connect()`. Todavía no corren en CI (ver [`docs/roadmap.md`](docs/roadmap.md), paso 1).
 
 ### Tests e2e (`tests/e2e/`)
 
@@ -331,7 +351,7 @@ Las más significativas:
 | [0013](docs/adr/0013-resiliencia-de-conexion-al-broker.md) | Retry en cold start + watchdog | `connect_robust` no reintenta el primer connect: un servicio quedaba zombie tras un arranque en frío |
 | [0008](docs/adr/0008-tests-contra-postgres-real.md) | Tests de integración contra PostgreSQL real | Con SQLite, los tests de race-condition pasan sin probar nada |
 
-**[Ver los 18 ADRs →](docs/adr/README.md)**
+**[Ver los 20 ADRs →](docs/adr/README.md)**
 
 ---
 
