@@ -9,7 +9,7 @@ SERVICES := order-service inventory-service notification-service
 # behaviour without OS-specific paths.
 UV := uv
 
-.PHONY: help install up down logs ps build test lint format e2e
+.PHONY: help install up down logs ps build test test-broker lint format e2e
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -39,15 +39,19 @@ test: ## Run every service's test suite with coverage (enforces the per-service 
 		(cd services/$$svc && $(UV) run pytest -q --cov=app --cov-report=term-missing) || exit 1; \
 	done
 	@echo "==> testing shared"
-	@(cd shared && $(UV) run --package shared pytest -q) || exit 1
+	@(cd shared && $(UV) run --package shared pytest -q -m "not integration") || exit 1
 
-lint: ## Lint + format check + type check every service and lint the shared package
+test-broker: ## Run the 3 retry/DLQ forcing tests against a real RabbitMQ (Docker, ~4.5 min)
+	@(cd shared && $(UV) run --package shared pytest -q -m integration tests/integration/) || exit 1
+
+lint: ## Lint + format check + type check every service and the shared package
 	@for svc in $(SERVICES); do \
 		echo "==> linting $$svc"; \
 		(cd services/$$svc && $(UV) run ruff check . && $(UV) run ruff format --check . && $(UV) run mypy app) || exit 1; \
 	done
 	$(UV) run --package shared ruff check shared
 	$(UV) run --package shared ruff format --check shared
+	cd shared && $(UV) run --package shared mypy src
 
 format: ## Auto-format every service and the shared package with ruff
 	@for svc in $(SERVICES); do \
