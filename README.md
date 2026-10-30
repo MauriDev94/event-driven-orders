@@ -242,8 +242,9 @@ uv nativo del sistema operativo + Docker Desktop (o Docker nativo en Linux); `.p
 Cada servicio se desarrolló con **TDD** (Red -> Green -> Refactor). Los tests de integración de `order-service` e `inventory-service` corren contra **PostgreSQL real** vía `testcontainers` — SQLite no tiene `FOR UPDATE` ni row-level locking, lo que haría pasar los tests de race-condition/idempotencia sin probar nada.
 
 ```bash
-make lint      # ruff check + ruff format --check + mypy en los 3 servicios + ruff sobre shared
-make test      # pytest con cobertura en los 3 servicios + shared (respeta el gate)
+make lint      # ruff check + ruff format --check + mypy en los 3 servicios y en shared
+make test      # pytest con cobertura en los 3 servicios (respeta el gate) + unit tests de shared
+make test-broker  # los 3 forcing tests de retry/DLQ contra RabbitMQ real (~4,5 min, requiere Docker)
 make format    # ruff format (auto-formatea los 3 servicios + shared)
 
 # por servicio:
@@ -275,7 +276,7 @@ uv run --package shared pytest -m "integration and not slow" tests/integration/ 
 uv run --package shared pytest -m integration tests/integration/                  # los 3 (~4,5 min)
 ```
 
-El contenedor se levanta una vez por sesión y lo comparten los 3 tests. El fixture reemplaza el readiness probe de `RabbitMqContainer`, que usa `pika` y se cuelga en el handshake con RabbitMQ 3.13, por un `aio_pika.connect()`. Todavía no corren en CI (ver [`docs/roadmap.md`](docs/roadmap.md), paso 1).
+El contenedor se levanta una vez por sesión y lo comparten los 3 tests. El fixture reemplaza el readiness probe de `RabbitMqContainer`, que usa `pika` y se cuelga en el handshake con RabbitMQ 3.13, por un `aio_pika.connect()`. En CI corre el escenario rápido (job `tests-broker`); los dos lentos se corren en local con `make test-broker`.
 
 ### Tests e2e (`tests/e2e/`)
 
@@ -323,7 +324,9 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 | Job | Qué hace |
 |---|---|
 | `quality` (matrix x 3 servicios) | `ruff check` + `ruff format --check` + `mypy app` |
-| `quality-shared` | `ruff check` + `ruff format --check` sobre `shared/` |
+| `quality-shared` | `ruff check` + `ruff format --check` + `mypy src` sobre `shared/` |
+| `tests-shared` | Unit tests de `shared/` (`-m "not integration"`), sin Docker |
+| `tests-broker` | El forcing test rápido de retry/DLQ contra un **RabbitMQ real** (testcontainers en el Docker del runner) |
 | `tests-db` (matrix: order, inventory) | `pytest` con cobertura sobre un **Postgres 16** efímero (service container con healthcheck `pg_isready`) |
 | `tests` (notification) | `pytest` con cobertura, sin DB |
 
