@@ -16,3 +16,11 @@ def test_should_report_service_name_when_health_is_requested(client: TestClient)
     assert body["service"] == "order-service"
     assert "database" in body
     assert "broker" in body
+
+
+def test_should_report_database_healthy_when_the_test_database_is_reachable(
+    client: TestClient,
+) -> None:
+    body = client.get("/health").json()
+
+    assert body["database"] == "healthy"
