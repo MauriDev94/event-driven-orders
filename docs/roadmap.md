@@ -13,7 +13,7 @@ Estado al **2026-10-28**, con el orden de los pasos 2 a 7 actualizado el **2026-
 - [x] **Tests lentos.** Los tests que arrancaban el lifespan real sin broker (fixtures `client` / `api_client`) pasaban por `connect_with_retry`: 5 intentos con backoff de 1+2+4+8 s, y en Windows cada intento contra `localhost` tarda ~4 s (`::1` y `127.0.0.1`), ~35 s por arranque. Ahora esos fixtures reemplazan `app.main.connect_with_retry` por un doble que falla al primer intento y deja el watchdog esperando hasta el shutdown. De paso, ya no se conectan a un RabbitMQ local si hay uno corriendo (`make up`). Issue [#43](https://github.com/MauriDev94/event-driven-orders/issues/43). La suite de `order-service` bajó de 9 min 19 s a 28 s en Windows.
 - [ ] **El mismo problema con la base en `/health`**: los tests que llaman a `/health` en `order-service` e `inventory-service` ejecutan el `SELECT 1` contra la base configurada (`localhost:5432`), no contra la del testcontainer. En Windows tardan ~4 s cada uno por la conexión rechazada, y con `make up` corriendo se conectan a la base del stack. Reemplazar la sesión de `/health` en el fixture `client`.
 - [ ] `make` en Windows: instalar con `winget install ezwinports.make` (opcional; mientras tanto, los comandos `uv` equivalentes están en `CLAUDE.md`).
-- [ ] Levantar el stack completo (`make up`), correr `make e2e` en este equipo y medir la memoria del stack con `docker stats` (sirve para dimensionar la VM del paso 4).
+- [x] Levantar el stack completo, correr el e2e en este equipo y medir la memoria del stack (2026-10-30). Sin `make` y sin `.env` local, el equivalente es `docker compose --env-file .env.example up -d --build` y `uv run --package event-driven-orders-e2e pytest tests/e2e -q -m e2e`. Resultado: el stack se construye y levanta en 77 s, los 3 `/health` reportan base y broker sanos y el e2e pasa (2 tests en 1,6 s). En reposo, `docker stats` mide ~790 MiB entre los 9 contenedores: RabbitMQ 189, Grafana 171, Prometheus 122, Postgres de órdenes 71, `order-service` 71, `inventory-service` 70, `notification-service` 51, Postgres de inventario 37 y Mailhog 8.
 
 ## Paso 1 — Cerrar lo suelto
 
@@ -42,10 +42,11 @@ Ajustes para que el stack corra en la VM gratis de Oracle, que es ARM (Ampere A1
 
 - [ ] **Fase 8c: deploy real** de los 4 servicios en Oracle Cloud (Always Free) con `docker-compose.prod.yml` + Caddy, siguiendo `docs/deploy.md`. El asistente se publica solo cuando el rate limit de la fase D esté andando. Completar el TODO del screenshot en el README.
   - El plan gratis de Ampere A1 bajó el 2026-06-15 a 2 OCPU / 12 GB en total.
-  - Oracle puede reclamar una VM gratis si en 7 días el CPU (percentil 95), la red y la memoria quedan todos bajo el 20 %. Dimensionar la VM con la memoria medida del stack (paso 0), para que el uso normal quede sobre ese umbral.
+  - Oracle puede reclamar una VM gratis si en 7 días el CPU (percentil 95), la red y la memoria quedan todos bajo el 20 %. Dimensionar la VM con la memoria medida del stack (paso 0), para que el uso normal quede sobre ese umbral. Con ~0,8 GB del stack actual, más el asistente (Node, Postgres y Redis) y el sistema operativo, el total en reposo debería rondar 1,5 GB: una VM de 12 GB quedaría cerca del 12 % y una de 4 a 6 GB, sobre el 20 %. Es una estimación: confirmarla con la métrica de memoria de Oracle durante la primera semana.
   - Crear una VM A1 suele fallar con "out of host capacity". La región principal se elige al registrarse y no se puede cambiar.
   - La cuenta se queda en el plan gratis, sin pasar a Pay As You Go: así Oracle no puede cobrar nada.
 - [ ] **Prueba de carga** (k6 o Locust): cientos de órdenes concurrentes sobre el mismo SKU, para mostrar que no hay sobreventa ([ADR-0007](adr/0007-reserva-de-stock-atomica.md)) y sacar el screenshot del dashboard de Grafana con tráfico real.
+- [ ] **GIF o video del flujo en el README**: crear un pedido, verlo pasar a `confirmed`, el email en Mailpit y el dashboard de Grafana. Es la evidencia que no depende de la VM: si Oracle la reclama o se cae, el README sigue mostrando la app funcionando. Se graba con el stack local, después de Mailpit (paso 2), y se vuelve a grabar cuando esté el asistente.
 
 ## Paso 5 — Outbox transaccional
 
