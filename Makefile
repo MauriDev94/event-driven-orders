@@ -9,7 +9,7 @@ SERVICES := order-service inventory-service notification-service
 # behaviour without OS-specific paths.
 UV := uv
 
-.PHONY: help install up down logs ps build test test-broker lint format e2e
+.PHONY: help install env up down logs ps build test test-broker lint format e2e
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -17,6 +17,9 @@ help: ## Show this help
 
 install: ## Create the shared .venv and install every workspace member (runtime + dev)
 	$(UV) sync
+
+env: ## Write .env from .env.example with random passwords (never overwrites)
+	$(UV) run --no-project python scripts/generate_env.py
 
 up: ## Start the full stack (infra + services) in the background
 	docker compose up -d --build
