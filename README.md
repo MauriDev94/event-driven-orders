@@ -385,7 +385,7 @@ El sistema expone el **pilar de métricas** como complemento al logging JSON est
 |---|---|---|
 | **Prometheus** | `9090` | Scraping de los 3 servicios + RabbitMQ |
 | **Grafana** | `3000` | Dashboard con provisioning automático |
-| **RabbitMQ** metrics | `15692` | Plugin `rabbitmq_prometheus` |
+| **RabbitMQ** metrics | `15692` | Plugin `rabbitmq_prometheus`: `/metrics` agregado y `/metrics/detailed` por cola |
 
 ### Métricas custom (prefijo `edo_`)
 
@@ -408,6 +408,8 @@ docker compose up -d prometheus grafana
 - **Grafana**: <http://localhost:3000> (usuario `admin`, contraseña `GRAFANA_ADMIN_PASSWORD` de tu `.env`)
 
 El dashboard **Event-Driven Orders** carga automáticamente al iniciar Grafana (provisioning). Incluye paneles para throughput, latencia p95, DLQ, reintentos y profundidad de colas RabbitMQ.
+
+El panel **RabbitMQ Queue Depth** muestra una línea por cola (las 15: las 3 principales, sus retry y sus DLQ) con `rabbitmq_detailed_queue_messages_ready` y `rabbitmq_detailed_queue_messages_unacked`. Prometheus las scrapea de `/metrics/detailed?family=queue_coarse_metrics` (job `rabbitmq-queues`), porque el `/metrics` del plugin entrega una sola serie agregada, sin label `queue`.
 
 ### Screenshot del dashboard
 
