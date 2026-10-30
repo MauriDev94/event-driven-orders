@@ -27,9 +27,10 @@ README, ADRs, commits, PRs and issues are in Spanish; code, comments and docstri
 cp .env.example .env && make up   # RabbitMQ, 2x Postgres, Mailhog, 3 services, Prometheus, Grafana
 make ps / make logs / make down
 uv sync --all-packages            # every workspace member + dev groups (CI adds --frozen)
-make lint                         # per service: ruff check, ruff format --check, mypy app; shared: ruff only
+make lint                         # per service: ruff check, ruff format --check, mypy app; shared: same, with mypy src
 make format
-make test                         # pytest + coverage gate per service, then shared (see note below)
+make test                         # pytest + coverage gate per service, then shared's unit tests (no Docker for shared)
+make test-broker                  # the 3 retry/DLQ forcing tests against a real RabbitMQ (~4.5 min)
 make e2e                          # needs `make up` first; tests/e2e with marker e2e
 ```
 
@@ -50,7 +51,7 @@ uv run --package shared pytest -m "integration and not slow" tests/integration/ 
 uv run --package shared pytest -m integration tests/integration/                 # all 3 forcing tests (~4.5 min of real TTLs)
 ```
 
-`make test` runs shared's suite with no marker filter, so it includes the slow RabbitMQ forcing tests. CI runs only ruff on `shared/`, never its tests, and the e2e suite is local-only by design (ADR-0017): run `make e2e` before a PR that touches the event flow.
+CI runs shared's lint, mypy and unit tests, plus the fast forcing test (`tests-broker` job). The two `slow` forcing tests and the e2e suite are local-only (ADR-0017 for e2e): run `make test-broker` before a PR that touches retry/DLQ, and `make e2e` before one that touches the event flow.
 
 Coverage gates are `[tool.coverage.report] fail_under` in each service's `pyproject.toml` (order 85, inventory 80, notification 85). README numbers can lag behind.
 

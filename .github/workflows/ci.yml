@@ -51,8 +51,8 @@ jobs:
         run: uv run --package ${{ matrix.service }} mypy app
 
   # ---------------------------------------------------------------------------
-  # Lint the shared contracts package (lives at the repo root, outside any
-  # single service). Mirrors `make lint`'s `ruff check shared`.
+  # Lint + format + type-check the shared package (lives at the repo root,
+  # outside any single service). Mirrors the shared part of `make lint`.
   # ---------------------------------------------------------------------------
   quality-shared:
     name: Quality (shared)
@@ -79,6 +79,75 @@ jobs:
 
       - name: Ruff format check
         run: uv run --package shared ruff format --check shared
+
+      - name: Type check
+        working-directory: shared
+        run: uv run --package shared mypy src
+
+  # ---------------------------------------------------------------------------
+  # Unit tests for the shared package. No broker and no Docker: the forcing
+  # tests against a real RabbitMQ are marked `integration` and run in
+  # `tests-broker` below.
+  # ---------------------------------------------------------------------------
+  tests-shared:
+    name: Tests (shared)
+    runs-on: ubuntu-latest
+    needs: [quality, quality-shared]
+
+    defaults:
+      run:
+        working-directory: shared
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.12.5"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --frozen --package shared
+
+      - name: Run unit tests
+        run: uv run --package shared pytest -q -m "not integration"
+
+  # ---------------------------------------------------------------------------
+  # Retry/DLQ forcing test against a real RabbitMQ (testcontainers on the
+  # runner's Docker). Only the fast scenario (permanent failure -> DLQ) runs
+  # here; the two `slow` ones wait through ~4 min of real TTLs and stay local
+  # (`make test-broker`). Issue #39.
+  # ---------------------------------------------------------------------------
+  tests-broker:
+    name: Tests (shared, RabbitMQ)
+    runs-on: ubuntu-latest
+    needs: [quality, quality-shared]
+
+    defaults:
+      run:
+        working-directory: shared
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.12.5"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        run: uv sync --frozen --package shared
+
+      - name: Run forcing test (fast scenario)
+        run: uv run --package shared pytest -q -m "integration and not slow" tests/integration/
 
   # ---------------------------------------------------------------------------
   # Tests for the services that own a database (order, inventory). Each gets a
