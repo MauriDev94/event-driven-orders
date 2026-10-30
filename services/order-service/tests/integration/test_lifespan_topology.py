@@ -67,6 +67,7 @@ async def _await(task) -> None:
     await task
 
 
+@pytest.mark.usefixtures("db_session_override")
 def test_should_spawn_watchdog_and_recover_when_broker_unreachable_at_startup(
     monkeypatch,
 ) -> None:
