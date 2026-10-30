@@ -18,7 +18,11 @@ way to observe that with a timeout instead of hanging the test session.
 
 import asyncio
 import contextlib
+import socket
 import threading
+
+import pytest
+from aio_pika.exceptions import CONNECTION_EXCEPTIONS
 
 from shared.messaging.connection import RabbitMQConnection
 
@@ -70,3 +74,20 @@ def test_should_not_block_event_loop_shutdown_when_connect_is_cancelled() -> Non
         "reconnect task running"
     )
     assert errors == []
+
+
+def _unused_local_port() -> int:
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+async def test_should_still_raise_connection_error_when_broker_refuses() -> None:
+    """Closing the failed connection must not mask the original error:
+    ``connect_with_retry`` only retries ``CONNECTION_EXCEPTIONS``."""
+    broker = RabbitMQConnection(f"amqp://127.0.0.1:{_unused_local_port()}/")
+
+    with pytest.raises(CONNECTION_EXCEPTIONS):
+        await broker.connect()
+
+    assert broker.is_connected is False

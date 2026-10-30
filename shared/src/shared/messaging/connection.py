@@ -5,11 +5,11 @@
 ``connect()`` (or any zero-arg async callable) with exponential backoff so a
 service survives a cold start where RabbitMQ is not ready yet.
 
-Once the first connection succeeds, ``aio_pika.connect_robust`` takes over:
-it reconnects automatically (and re-declares topology/consumers registered
-on its robust channel) if the broker drops later. This helper only covers
-the *initial* connection, which ``connect_robust`` does not retry on its own
-(``fail_fast`` defaults to ``True``).
+Once the first connection succeeds, ``aio_pika.RobustConnection`` takes
+over: it reconnects automatically (and re-declares topology/consumers
+registered on its robust channel) if the broker drops later. This helper
+only covers the *initial* connection, which ``RobustConnection`` does not
+retry on its own (``fail_fast`` defaults to ``True``).
 """
 
 import asyncio
@@ -17,6 +17,7 @@ import logging
 from collections.abc import Awaitable, Callable
 
 import aio_pika
+from aio_pika.connection import make_url
 from aio_pika.exceptions import CONNECTION_EXCEPTIONS
 
 logger = logging.getLogger(__name__)
@@ -35,11 +36,26 @@ class RabbitMQConnection:
         self._channel: aio_pika.abc.AbstractRobustChannel | None = None
 
     async def connect(self) -> None:
-        """Open a robust connection and a channel. Idempotent."""
+        """Open a robust connection and a channel. Idempotent.
+
+        The connection is built by hand instead of with
+        ``aio_pika.connect_robust`` so it can be closed when the first
+        attempt fails or is cancelled. ``RobustConnection`` makes its
+        attempts in a background task that swallows ``CancelledError`` and
+        keeps reconnecting until ``close()`` is called; left open, that task
+        blocks ``asyncio.run()`` forever when a service shuts down while the
+        broker is unreachable.
+        """
         if self._connection is not None and not self._connection.is_closed:
             return
-        self._connection = await aio_pika.connect_robust(self._url, timeout=5)
-        self._channel = await self._connection.channel()
+        connection = aio_pika.RobustConnection(make_url(self._url))
+        try:
+            await connection.connect(timeout=5)
+        except BaseException:
+            await connection.close()
+            raise
+        self._connection = connection
+        self._channel = await connection.channel()
 
     async def close(self) -> None:
         """Close the connection if open."""
