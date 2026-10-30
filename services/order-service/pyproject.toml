@@ -100,10 +100,8 @@ omit = ["*/__init__.py", "tests/*"]
 
 [tool.coverage.report]
 show_missing = true
-# Fase 1: the order-create flow (domain + use cases + mappers + HTTP) is fully
-# tested, lifting real coverage to ~88%. Gate raised from the post-scaffold
-# floor (40) to 85. Coverage is deterministic (integration tests use a SQLite
-# override + spy publisher, no infra), so CI matches local. Remaining gaps are
-# Fase 2 paths: the inventory-results consumer, repository.update (confirm/
-# reject) and the real aio-pika publisher (needs a broker).
+# Gate raised from the post-scaffold floor (40) to 85 in Fase 1; real coverage
+# is ~92%. Integration tests run against real Postgres (a testcontainer
+# locally, a service container in CI; ADR-0008) with a spy publisher and no
+# broker, so CI matches local. show_missing lists the remaining gaps.
 fail_under = 85

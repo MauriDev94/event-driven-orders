@@ -217,24 +217,10 @@ async def _connect_with_retry_broker_down(connect, *, service_name, max_attempts
 
 
 @pytest.fixture
-def client(monkeypatch) -> TestClient:
-    """FastAPI test client that runs the app lifespan with the broker down
-    (the lifespan is resilient to that, so no infrastructure is needed)."""
-    monkeypatch.setattr(main_module, "connect_with_retry", _connect_with_retry_broker_down)
-    with TestClient(app) as test_client:
-        yield test_client
-
-
-@pytest.fixture
-def api_client(session_factory, spy_publisher, monkeypatch):
-    """Test client with the DB and broker boundaries replaced by fakes.
-
-    Uses real Postgres (session_factory) and a spy publisher — exercising
-    the full HTTP → use case → repo path without a live broker.
-    """
-    from app.features.orders.di.dependencies import get_event_publisher
-
-    monkeypatch.setattr(main_module, "connect_with_retry", _connect_with_retry_broker_down)
+def db_session_override(session_factory) -> Generator[None, None, None]:
+    """Route ``get_db_session`` (the routers and ``/health``) to the test
+    Postgres instead of the configured ``localhost`` database, which on
+    Windows costs ~4 s per refused connect."""
 
     def override_get_db():
         session = session_factory()
@@ -244,6 +230,30 @@ def api_client(session_factory, spy_publisher, monkeypatch):
             session.close()
 
     app.dependency_overrides[get_db_session] = override_get_db
+    yield
+    app.dependency_overrides.pop(get_db_session, None)
+
+
+@pytest.fixture
+def client(db_session_override, monkeypatch) -> TestClient:
+    """FastAPI test client that runs the app lifespan with the broker down
+    (the lifespan is resilient to that) and sessions on the test Postgres."""
+    monkeypatch.setattr(main_module, "connect_with_retry", _connect_with_retry_broker_down)
+    with TestClient(app) as test_client:
+        yield test_client
+
+
+@pytest.fixture
+def api_client(db_session_override, spy_publisher, monkeypatch):
+    """Test client with the DB and broker boundaries replaced by fakes.
+
+    Uses real Postgres (``db_session_override``) and a spy publisher —
+    exercising the full HTTP → use case → repo path without a live broker.
+    """
+    from app.features.orders.di.dependencies import get_event_publisher
+
+    monkeypatch.setattr(main_module, "connect_with_retry", _connect_with_retry_broker_down)
+
     app.dependency_overrides[get_event_publisher] = lambda: spy_publisher
     with TestClient(app) as test_client:
         yield test_client
