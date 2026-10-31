@@ -14,8 +14,12 @@
 services:
   # --- Infrastructure ------------------------------------------------------
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:3.13-management
     container_name: edo_rabbitmq
+    # RabbitMQ keeps its data in a directory named after the node, and the node
+    # name comes from the hostname (the container id by default). A fixed one
+    # lets a recreated container find its queues and messages in the volume.
+    hostname: rabbitmq
     restart: unless-stopped
     environment:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER}
@@ -26,6 +30,7 @@ services:
       - "15692:15692"  # Prometheus metrics
     volumes:
       - ./infra/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "ping"]
       interval: 10s
@@ -191,6 +196,7 @@ services:
       - prometheus
 
 volumes:
+  rabbitmq_data:
   postgres_data_orders:
   postgres_data_inventory:
   grafana_data:
