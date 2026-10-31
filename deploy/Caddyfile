@@ -6,13 +6,13 @@
 #
 # {$DOMAIN} debe resolver a la IP pública de la VM. Con sslip.io alcanza con
 # usar "<ip-con-guiones>.sslip.io" como DOMAIN (ej: 203-0-113-10.sslip.io);
-# los subdominios "rabbitmq.<DOMAIN>" / "mailhog.<DOMAIN>" resuelven a la
+# los subdominios "rabbitmq.<DOMAIN>" / "mailpit.<DOMAIN>" resuelven a la
 # misma IP automáticamente.
 #
 # Generar los hashes de basic auth con:
 #   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<password>'
 # y pegar el resultado (incluye el prefijo $2a$...) en RABBITMQ_UI_PASSWORD_HASH
-# / MAILHOG_UI_PASSWORD_HASH dentro de .env.production.
+# / MAILPIT_UI_PASSWORD_HASH dentro de .env.production.
 # ----------------------------------------------------------------------------
 
 # --- order-service: API + Swagger, público --------------------------------
@@ -28,10 +28,10 @@ rabbitmq.{$DOMAIN} {
 	reverse_proxy rabbitmq:15672
 }
 
-# --- Mailhog UI: protegido con basic auth -----------------------------------
-mailhog.{$DOMAIN} {
+# --- Mailpit UI: protegido con basic auth -----------------------------------
+mailpit.{$DOMAIN} {
 	basicauth {
-		{$MAILHOG_UI_USER} {$MAILHOG_UI_PASSWORD_HASH}
+		{$MAILPIT_UI_USER} {$MAILPIT_UI_PASSWORD_HASH}
 	}
-	reverse_proxy mailhog:8025
+	reverse_proxy mailpit:8025
 }

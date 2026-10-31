@@ -77,13 +77,15 @@ services:
     networks:
       - edo_net
 
-  mailhog:
-    image: mailhog/mailhog
-    container_name: edo_mailhog
+  # Multi-arch (the prod VM is arm64, which mailhog/mailhog never shipped).
+  # The image has its own healthcheck (`mailpit readyz`).
+  mailpit:
+    image: axllent/mailpit:v1.32.0
+    container_name: edo_mailpit
     restart: unless-stopped
     ports:
       - "1025:1025"  # SMTP
-      - "8025:8025"  # Web UI
+      - "8025:8025"  # Web UI and API
     networks:
       - edo_net
 
@@ -150,8 +152,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
-      mailhog:
-        condition: service_started
+      mailpit:
+        condition: service_healthy
     networks:
       - edo_net
 
