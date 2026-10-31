@@ -191,7 +191,7 @@ Y en Mailpit (http://localhost:8025) llega un email "Your order `<order_id>` is 
 
 ### Camino de rechazo (stock insuficiente)
 
-Pedí más de lo que hay (`SKU-005` solo tiene 5 unidades):
+Pide más de lo que hay (`SKU-005` solo tiene 5 unidades):
 
 ```bash
 curl -X POST http://localhost:8001/v1/orders \
