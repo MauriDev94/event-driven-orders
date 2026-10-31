@@ -9,6 +9,7 @@ import {
   createTestDatabase,
   type TestDatabase,
 } from '../../../support/database.js';
+import { InMemoryTimelineCache } from '../../../support/in-memory-timeline-cache.js';
 import {
   orderConfirmed,
   orderCreated,
@@ -40,9 +41,10 @@ describe('PrismaOrderHistoryRepository', () => {
   });
 
   function project(event: Parameters<typeof toProjectionCommand>[0]) {
-    return new ProjectOrderEvent(repository).execute(
-      toProjectionCommand(event),
-    );
+    return new ProjectOrderEvent(
+      repository,
+      new InMemoryTimelineCache(),
+    ).execute(toProjectionCommand(event));
   }
 
   it('records an event once; the redelivery inserts nothing', async () => {
