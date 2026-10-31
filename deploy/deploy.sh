@@ -5,14 +5,14 @@
 # Uso (desde la raíz del repo, en la VM):
 #   ./deploy/deploy.sh
 #
-# Requiere: .env.production en la raíz del repo (ver DEPLOY.md sección 3).
+# Requiere: .env.production en la raíz del repo (ver docs/deploy.md, paso 4).
 # ----------------------------------------------------------------------------
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
 if [ ! -f .env.production ]; then
-  echo "Error: falta .env.production en la raíz del repo. Ver DEPLOY.md sección 3." >&2
+  echo "Error: falta .env.production en la raíz del repo. Ver docs/deploy.md, paso 4." >&2
   exit 1
 fi
 
