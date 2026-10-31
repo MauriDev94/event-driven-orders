@@ -343,7 +343,7 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 | `tests-broker` | El forcing test rápido de retry/DLQ contra un **RabbitMQ real** (testcontainers en el Docker del runner) |
 | `tests-db` (matrix: order, inventory) | `pytest` con cobertura sobre un **Postgres 16** efímero (service container con healthcheck `pg_isready`) |
 | `tests` (notification) | `pytest` con cobertura, sin DB |
-| `build-images` | Construye las 3 imágenes con `docker compose build` y verifica que `shared.*` y `app.main` se importen dentro de cada una |
+| `build-images` (matrix: amd64, arm64) | Construye las 3 imágenes con `docker compose build` y verifica que `shared.*` y `app.main` se importen dentro de cada una. arm64 corre en un runner ARM nativo, como la VM de producción, y además baja las imágenes de terceros del stack de producción |
 
 - **Python 3.12** instalado por uv (`astral-sh/setup-uv@v4`, versión fija); cada job sincroniza solo su paquete del workspace con `uv sync --frozen`. `actions/checkout@v4`, `actions/upload-artifact@v4`.
 - **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` y `notification-service` están en **85**; `inventory-service` en **80**.
