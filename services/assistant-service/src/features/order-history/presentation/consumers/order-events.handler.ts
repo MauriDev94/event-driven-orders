@@ -45,6 +45,8 @@ export function buildOrderEventHandler(
       },
       'order event projected',
     );
+    // Like the Python consumers, a redelivery isn't counted as processed.
+    if (result === 'duplicate') return;
     EVENTS_PROCESSED.inc({
       service: SERVICE_NAME,
       event_type: contract.event_type,
