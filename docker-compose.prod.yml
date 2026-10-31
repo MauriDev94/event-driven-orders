@@ -57,9 +57,18 @@ services:
     restart: always
     ports: !reset []
 
+  redis:
+    restart: always
+    ports: !reset []
+
   assistant-service:
     restart: always
     ports: !reset []
+    environment:
+      # Caddy reaches the service from its private IP in edo_net, so only
+      # private addresses may set X-Forwarded-For (the rate limit keys on
+      # the client IP).
+      TRUST_PROXY: uniquelocal
 
   prometheus:
     restart: always
