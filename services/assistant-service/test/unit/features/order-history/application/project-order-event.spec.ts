@@ -2,6 +2,7 @@ import { DomainError } from '../../../../../src/common/domain-error.js';
 import { toProjectionCommand } from '../../../../../src/features/order-history/application/mappers/order-event.mapper.js';
 import { ProjectOrderEvent } from '../../../../../src/features/order-history/application/usecases/project-order-event.js';
 import { InMemoryOrderHistoryRepository } from '../../../../support/in-memory-order-history.repository.js';
+import { InMemoryTimelineCache } from '../../../../support/in-memory-timeline-cache.js';
 import {
   orderConfirmed,
   orderCreated,
@@ -11,11 +12,13 @@ import {
 
 describe('ProjectOrderEvent', () => {
   let repository: InMemoryOrderHistoryRepository;
+  let cache: InMemoryTimelineCache;
   let useCase: ProjectOrderEvent;
 
   beforeEach(() => {
     repository = new InMemoryOrderHistoryRepository();
-    useCase = new ProjectOrderEvent(repository);
+    cache = new InMemoryTimelineCache();
+    useCase = new ProjectOrderEvent(repository, cache);
   });
 
   it('logs the event and creates the view of a new order', async () => {
@@ -64,6 +67,31 @@ describe('ProjectOrderEvent', () => {
     ).rejects.toThrow(DomainError);
     expect(repository.events.has(impossible.event_id)).toBe(false);
     expect(repository.views.get('o-1')?.view.status).toBe('confirmed');
+  });
+
+  it('invalidates the cached timeline once the event committed', async () => {
+    const event = orderCreated('o-1');
+    let committed = false;
+    cache.onInvalidate = () => {
+      committed = repository.events.has(event.event_id);
+    };
+
+    await useCase.execute(toProjectionCommand(event));
+
+    expect(cache.invalidated).toEqual(['o-1']);
+    expect(committed).toBe(true);
+  });
+
+  it('leaves the cache alone for a duplicate or a failed projection', async () => {
+    const event = orderConfirmed('o-1');
+    await useCase.execute(toProjectionCommand(event));
+
+    await useCase.execute(toProjectionCommand(event));
+    await expect(
+      useCase.execute(toProjectionCommand(orderRejected('o-1', 'too late'))),
+    ).rejects.toThrow(DomainError);
+
+    expect(cache.invalidated).toEqual(['o-1']);
   });
 });
 
