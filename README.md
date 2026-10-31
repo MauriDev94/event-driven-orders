@@ -1,6 +1,6 @@
 # Event-Driven Orders
 
-> Sistema de procesamiento de órdenes basado en eventos — microservicios asíncronos en **Python 3.12 / FastAPI** comunicados por **RabbitMQ**, con **Clean Architecture + DDD**.
+> Sistema de procesamiento de órdenes basado en eventos — microservicios asíncronos en **Python 3.12 / FastAPI**, más uno en **TypeScript / NestJS**, comunicados por **RabbitMQ**, con **Clean Architecture + DDD**.
 > Portfolio project: idempotencia, atomicidad anti race-condition, DLQ + retries con backoff, observabilidad (logging JSON + correlation IDs) y tests e2e contra infraestructura real.
 
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen)](.github/workflows/ci.yml)
@@ -9,12 +9,13 @@
 [![Coverage order-service](https://img.shields.io/badge/coverage%20order--service-93%25-brightgreen)](#testing)
 [![Coverage inventory-service](https://img.shields.io/badge/coverage%20inventory--service-90%25-brightgreen)](#testing)
 [![Coverage notification-service](https://img.shields.io/badge/coverage%20notification--service-96%25-brightgreen)](#testing)
+[![Coverage assistant-service](https://img.shields.io/badge/coverage%20assistant--service-96%25-brightgreen)](#testing)
 
 ---
 
 ## Qué es
 
-Sistema de e-commerce dividido en **3 microservicios** que se comunican exclusivamente por **eventos** a través de un message broker (RabbitMQ), demostrando comunicación asíncrona, idempotencia, dead-letter queues, retries con backoff y eventual consistency.
+Sistema de e-commerce dividido en **4 microservicios** que se comunican exclusivamente por **eventos** a través de un message broker (RabbitMQ), demostrando comunicación asíncrona, idempotencia, dead-letter queues, retries con backoff y eventual consistency. Tres están escritos en Python; el cuarto, en TypeScript, consume los mismos eventos sin importar código de Python: el contrato es el JSON que viaja por el broker.
 
 ```
    [Cliente]
@@ -30,6 +31,11 @@ Sistema de e-commerce dividido en **3 microservicios** que se comunican exclusiv
 ┌─────────────────────┐
 │ notification-service │  envía email (Mailpit)
 └─────────────────────┘
+
+ los 5 eventos ──▶ ┌───────────────────┐
+                   │ assistant-service │  read model con la historia de cada pedido
+                   │     (NestJS)      │  GET /v1/assistant/orders/{id}/timeline
+                   └───────────────────┘
 ```
 
 ```mermaid
@@ -40,6 +46,7 @@ sequenceDiagram
     participant I as inventory-service
     participant N as notification-service
     participant M as Mailpit
+    participant A as assistant-service
 
     C->>O: POST /v1/orders
     O->>O: persiste orden (pending)
@@ -53,6 +60,9 @@ sequenceDiagram
     Q->>N: order.confirmed | order.rejected
     N->>M: envía email
     O-->>C: GET /v1/orders/{id} -> confirmed | rejected
+    Q->>A: los 5 eventos del flujo
+    A->>A: proyecta la historia del pedido (idempotente)
+    A-->>C: GET /v1/assistant/orders/{id}/timeline
 ```
 
 ## Servicios
@@ -62,20 +72,21 @@ sequenceDiagram
 | `order-service` | FastAPI (REST + consumer) | Crea órdenes, orquesta el ciclo de vida, expone `/v1/orders` |
 | `inventory-service` | Worker (consumer) | Reserva stock con transacción atómica anti race-condition |
 | `notification-service` | Worker (consumer) | Envía notificaciones por email (Mailpit) |
+| `assistant-service` | NestJS (REST + consumer) | Proyecta los 5 eventos en un read model propio (CQRS) y expone la historia de cada pedido. El asistente con IA sobre ese read model llega en el próximo PR ([plan](docs/plan-assistant-service.md)) |
 
 ## Stack
 
 | Capa | Tecnología |
 |---|---|
-| Lenguaje | Python 3.12 |
-| Framework HTTP | FastAPI + Uvicorn |
-| Mensajería | RabbitMQ + `aio-pika` |
-| Persistencia | PostgreSQL 16 (database-per-service) + SQLAlchemy + Alembic |
-| Validación / contratos | Pydantic v2 |
+| Lenguaje | Python 3.12; TypeScript 6 en `assistant-service` |
+| Framework HTTP | FastAPI + Uvicorn; NestJS 12 |
+| Mensajería | RabbitMQ + `aio-pika`; `amqplib` |
+| Persistencia | PostgreSQL 16 (database-per-service) + SQLAlchemy + Alembic; Prisma 7 |
+| Validación / contratos | Pydantic v2; zod, verificado contra fixtures exportados de Pydantic |
 | Email (dev) | Mailpit (SMTP + API de inspección, multi-arquitectura) |
-| Observabilidad | `structlog` (logging JSON) + correlation ID por contexto |
-| Testing | pytest, pytest-asyncio, `testcontainers` (Postgres y RabbitMQ reales), httpx |
-| Lint / types | ruff + mypy |
+| Observabilidad | `structlog` (logging JSON) + correlation ID por contexto; `nestjs-pino`, `prom-client` |
+| Testing | pytest, pytest-asyncio, `testcontainers` (Postgres y RabbitMQ reales), httpx; Vitest + supertest |
+| Lint / types | ruff + mypy; oxlint + `tsc` + Prettier |
 | Infra | Docker Compose |
 | CI/CD | GitHub Actions |
 
@@ -86,62 +97,68 @@ Cada servicio aplica **Clean Architecture + DDD** (capas `domain` / `application
 - **El broker es un detalle de infraestructura.** Los use cases hablan con el puerto `EventPublisher` (`application/contracts/`); la implementación con `aio-pika` vive en `infrastructure/messaging/`.
 - **`presentation/` = puntos de entrada (adapters).** En `order-service`: `presentation/http/` (routers + schemas) y `presentation/consumers/` (handlers de eventos). En los workers: solo `presentation/consumers/`.
 - **`shared/contracts/`** es la única fuente de los *integration events* (Pydantic): los servicios no comparten entidades de dominio, solo estos modelos viajan por el broker. Cada servicio mapea entre su dominio y estos contratos.
-- **`shared/messaging/`** y **`shared/observability/`** son infraestructura transversal (retry/DLQ y logging) reusada por los 3 servicios — nunca lógica de negocio.
-- **database-per-service:** `order-service` y `inventory-service` tienen cada uno su Postgres; `notification-service` no tiene DB (consumer puro).
+- **`shared/messaging/`** y **`shared/observability/`** son infraestructura transversal (retry/DLQ y logging) reusada por los 3 servicios Python — nunca lógica de negocio.
+- **`assistant-service` no importa `shared/`.** Replica los contratos con zod, y CI los compara con fixtures generados desde los modelos Pydantic (`scripts/export_contract_fixtures.py`). También porta el protocolo de retry/DLQ: mismas colas, mismo header, mismas métricas ([ADR-0021](docs/adr/0021-assistant-service-en-typescript.md)).
+- **database-per-service:** `order-service`, `inventory-service` y `assistant-service` tienen cada uno su Postgres; `notification-service` no tiene DB (consumer puro).
 
 ## Patrones demostrados
 
 | Patrón | Dónde | Qué resuelve |
 |---|---|---|
-| **Idempotencia** (`processed_events`) | `order-service`, `inventory-service` | RabbitMQ es *at-least-once*: un evento redelivered no duplica efectos de negocio (`INSERT ... ON CONFLICT DO NOTHING` sobre `event_id`, misma transacción que la lógica de negocio) |
+| **Idempotencia** (`processed_events`) | `order-service`, `inventory-service`, `assistant-service` (`order_event_log`) | RabbitMQ es *at-least-once*: un evento redelivered no duplica efectos de negocio (`INSERT ... ON CONFLICT DO NOTHING` sobre `event_id`, misma transacción que la lógica de negocio) |
 | **Atomicidad anti race-condition** | `inventory-service` | `UPDATE products SET available_quantity = available_quantity - :qty WHERE sku = :sku AND available_quantity >= :qty` + `SAVEPOINT` por orden (all-or-nothing) — Postgres serializa vía row-level locking |
-| **DLQ + retries con backoff** | `shared/messaging/` (3 servicios) | 3 etapas (5s/30s/2m) vía colas TTL + dead-letter, header `x-retry-count`, clasificación transient/permanent |
+| **DLQ + retries con backoff** | `shared/messaging/` (3 servicios Python) y su versión en TypeScript (`assistant-service`) | 3 etapas (5s/30s/2m) vía colas TTL + dead-letter, header `x-retry-count`, clasificación transient/permanent |
 | **Eventual consistency** | flujo completo | La orden pasa por `pending -> confirmed/rejected` de forma asíncrona, sin transacción distribuida |
 | **Correlation ID end-to-end** | HTTP -> eventos -> 3 consumers | `structlog.contextvars` propaga el mismo id desde el `X-Correlation-ID` del request hasta cada log de cada servicio |
 | **Logging estructurado (JSON)** | `shared/observability/` | Toda línea de log (propia o de librerías) sale como JSON filtrable con `jq` |
-| **Database-per-service** | `order-service`, `inventory-service` | Cada servicio es dueño exclusivo de su esquema; integración solo por eventos |
+| **Database-per-service** | `order-service`, `inventory-service`, `assistant-service` | Cada servicio es dueño exclusivo de su esquema; integración solo por eventos |
+| **Read model (CQRS)** | `assistant-service` | La historia de cada pedido se arma solo con eventos. Tolera eventos fuera de orden (un `stock.reserved` que llega antes que `order.created`) y usa lock optimista entre proyecciones concurrentes |
+| **Contratos independientes del lenguaje** | `shared/contracts/` → zod | Un consumidor en TypeScript procesa los mismos eventos; los fixtures de Pydantic detectan la deriva en CI |
 
 ## Estructura del monorepo
 
 ```
 event-driven-orders/
-├── docker-compose.yml          # RabbitMQ + 2x Postgres + Mailpit + 3 servicios
+├── docker-compose.yml          # RabbitMQ + 3x Postgres + Mailpit + 4 servicios + Prometheus + Grafana
 ├── .env.example                # variables para docker-compose
 ├── Makefile                    # install / up / down / logs / ps / test / lint / format / e2e
 ├── .github/                    # CI (ci.yml) + plantillas de PR/issues + CODEOWNERS
 ├── shared/
 │   ├── contracts/               # integration events (Pydantic): BaseEvent + Order*/Stock*
-│   ├── messaging/                # retry policy + dispatcher (DLQ/backoff), reusado por los 3 servicios
+│   ├── messaging/                # retry policy + dispatcher (DLQ/backoff), reusado por los 3 servicios Python
 │   └── observability/            # logging JSON (structlog) + correlation id contextvars
+├── scripts/                     # generate_env.py y export_contract_fixtures.py
 ├── tests/e2e/                   # tests e2e contra el stack real (make e2e)
 └── services/
     ├── order-service/          # FastAPI: REST + consumer (feature: orders)
     ├── inventory-service/      # worker: consumer (feature: inventory)
-    └── notification-service/   # worker: consumer, sin DB (feature: notifications)
+    ├── notification-service/   # worker: consumer, sin DB (feature: notifications)
+    └── assistant-service/      # NestJS: consumer + REST (feature: order-history), fuera del workspace de uv
 ```
 
-Cada servicio: `app/{core,common,features/<feature>/{domain,application,infrastructure,presentation,di}}`.
+Cada servicio Python: `app/{core,common,features/<feature>/{domain,application,infrastructure,presentation,di}}`. `assistant-service` usa las mismas capas en `src/features/<feature>/`, y el cableado de DI vive en el módulo de Nest de cada feature.
 
 ## Puesta en marcha
 
 ```bash
-make env       # crea .env con contraseñas aleatorias (una sola vez)
+make env       # crea .env con contraseñas aleatorias; si ya existe, solo le agrega las claves nuevas
 make up        # docker compose up -d --build
 make ps        # ver healthchecks
 make logs      # seguir logs
 make down      # detener
 ```
 
-`make env` copia `.env.example` a `.env` y llena cada contraseña vacía (RabbitMQ, las dos bases y Grafana) con un valor aleatorio. `.env` no se versiona, y `docker compose` no arranca si falta alguna contraseña. Si lo regeneras con `--force`, corre `docker compose down -v`: Postgres, Grafana y RabbitMQ guardan la contraseña con la que se creó su volumen.
+`make env` copia `.env.example` a `.env` y llena cada contraseña vacía (RabbitMQ, las tres bases y Grafana) con un valor aleatorio. `.env` no se versiona, y `docker compose` no arranca si falta alguna contraseña. Si `.env` ya existe, `make env` conserva sus valores y solo agrega las claves que le falten, por ejemplo las de un servicio nuevo. Si lo regeneras entero con `--force`, corre `docker compose down -v`: Postgres, Grafana y RabbitMQ guardan la contraseña con la que se creó su volumen.
 
 | Servicio / infra | URL local |
 |---|---|
 | order-service `/health` | http://localhost:8001/health |
 | inventory-service `/health` | http://localhost:8002/health |
 | notification-service `/health` | http://localhost:8003/health |
+| assistant-service `/health` | http://localhost:8004/health |
 | RabbitMQ Management | http://localhost:15672 (usuario `guest`, contraseña `RABBITMQ_DEFAULT_PASS` de tu `.env`) |
 | Mailpit UI | http://localhost:8025 |
-| Postgres orders / inventory | localhost:5433 / localhost:5434 |
+| Postgres orders / inventory / assistant | localhost:5433 / localhost:5434 / localhost:5435 |
 
 ### Catálogo seed (`inventory-service`)
 
@@ -210,12 +227,39 @@ Invoke-RestMethod -Uri http://localhost:8001/v1/orders -Method Post -Body $body 
 
 La orden termina en `status: "rejected"` y llega un email "Your order `<order_id>` was rejected" con el motivo (`insufficient stock for product SKU-005`) a `c-2@example.com`.
 
+### Historia del pedido (`assistant-service`)
+
+`assistant-service` arma la historia de cada pedido solo con los eventos que ve pasar:
+
+```bash
+curl http://localhost:8004/v1/assistant/orders/<order_id>/timeline
+```
+
+```json
+{
+  "order_id": "b2b76920-…",
+  "customer_id": "c-2",
+  "status": "rejected",
+  "stock_result": "rejected",
+  "rejection_reason": "insufficient stock for product SKU-005",
+  "total_amount": "9990.00",
+  "items": [{ "product_id": "SKU-005", "quantity": 999, "unit_price": "10.00" }],
+  "events": [
+    { "event_type": "order.created", "occurred_at": "…", "correlation_id": "…", "event_id": "…" },
+    { "event_type": "stock.rejected", "reason": "insufficient stock for product SKU-005", "…": "…" },
+    { "event_type": "order.rejected", "reason": "insufficient stock for product SKU-005", "…": "…" }
+  ]
+}
+```
+
+Un pedido que el servicio no vio responde 404 con `{"message": "order not found"}`, igual que `order-service`.
+
 ### Verificar la reconexión al broker
 
-1. `make up` — esperar a que los 3 servicios reporten `"broker": "healthy"` en `/health`.
+1. `make up` — esperar a que los 4 servicios reporten `"broker": "healthy"` en `/health`.
 2. `docker compose restart rabbitmq` (o `docker compose stop rabbitmq` y luego `start rabbitmq` para simular un cold start más largo).
-3. Mientras RabbitMQ está caído, `/health` de los 3 servicios debe reportar `"broker": "unhealthy"` — pero los procesos siguen corriendo (no crashean, no hace falta `docker compose restart <servicio>`).
-4. Cuando RabbitMQ vuelve a estar disponible, los logs (`docker compose logs -f order-service inventory-service notification-service`) muestran `"connected to broker after N attempt(s)"` y `/health` vuelve a `"broker": "healthy"` solo, sin intervención manual.
+3. Mientras RabbitMQ está caído, `/health` de los 4 servicios debe reportar `"broker": "unhealthy"` — pero los procesos siguen corriendo (no crashean, no hace falta `docker compose restart <servicio>`).
+4. Cuando RabbitMQ vuelve a estar disponible, los logs (`docker compose logs -f order-service inventory-service notification-service assistant-service`) muestran `"connected to broker after N attempt(s)"` (en `assistant-service`, `"connected to RabbitMQ and consuming"`) y `/health` vuelve a `"broker": "healthy"` solo, sin intervención manual.
 5. Probar el flujo end-to-end (sección de arriba) para confirmar que los consumers siguen procesando eventos tras la reconexión.
 
 ### Inspeccionar DLQ y trazas
@@ -223,7 +267,7 @@ La orden termina en `status: "rejected"` y llega un email "Your order `<order_id
 - **RabbitMQ Management** (usuario `guest`, contraseña en tu `.env`): pestaña *Queues*, buscar `<service>.<queue>.dlq` o `.retry-5s/30s/2m`.
 - **Logs por correlation ID**:
   ```bash
-  docker compose logs order-service inventory-service notification-service --no-color \
+  docker compose logs order-service inventory-service notification-service assistant-service --no-color \
     | grep -o '{.*}' \
     | jq -c 'select(.correlation_id == "<id>")'
   ```
@@ -244,10 +288,10 @@ uv nativo del sistema operativo + Docker Desktop (o Docker nativo en Linux); `.p
 Cada servicio se desarrolló con **TDD** (Red -> Green -> Refactor). Los tests de integración de `order-service` e `inventory-service` corren contra **PostgreSQL real** vía `testcontainers` — SQLite no tiene `FOR UPDATE` ni row-level locking, lo que haría pasar los tests de race-condition/idempotencia sin probar nada.
 
 ```bash
-make lint      # ruff check + ruff format --check + mypy en los 3 servicios y en shared
-make test      # pytest con cobertura en los 3 servicios (respeta el gate) + unit tests de shared
+make lint      # ruff + mypy en los servicios Python y shared; oxlint + tsc + Prettier en assistant-service
+make test      # pytest con cobertura en los servicios Python + unit tests de shared + Vitest en assistant-service (todos con su gate)
 make test-broker  # los 3 forcing tests de retry/DLQ contra RabbitMQ real (~4,5 min, requiere Docker)
-make format    # ruff format (auto-formatea los 3 servicios + shared)
+make format    # ruff format en los servicios Python y shared; Prettier en assistant-service
 
 # por servicio:
 cd services/order-service && pytest -q --cov=app
@@ -259,8 +303,21 @@ cd services/order-service && pytest -q --cov=app
 | `inventory-service` | 38 | ~90% | 80 |
 | `notification-service` | 36 | ~96% | 85 |
 | `shared` | 44 unit + 3 forcing | — | — |
+| `assistant-service` | 84 | ~96% | 80 |
 
 > Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`. Los tests de `/health` también usan esa base: el fixture `client` reemplaza la sesión de `get_db_session`, así que nunca le pegan a la base configurada en `localhost`.
+
+### `assistant-service` (Vitest)
+
+```bash
+cd services/assistant-service
+npm ci                # una vez (make install también lo corre)
+npm run test:cov      # unit, integración y e2e de Nest, con el gate de vitest.config.ts
+npm run lint && npm run typecheck && npm run format:check
+```
+
+- **Integración contra servicios reales:** el repositorio Prisma corre contra Postgres (un `postgres:16-alpine` de testcontainers en local; en CI, el Postgres del job vía `TEST_DATABASE_URL`). La suite migra una base plantilla con el mismo `prisma migrate deploy` que corre el contenedor, y cada archivo de tests trabaja sobre una copia. El consumer se prueba contra un `rabbitmq:3.13-management` real: ACK, DLQ para un error permanente y `retry-5s` con `x-retry-count = 1` para uno transitorio.
+- **Contratos:** los esquemas zod parsean los fixtures de `test/fixtures/contracts/`, generados desde Pydantic. Si cambias un contrato en `shared/contracts`, regenéralos con `uv run --package shared python scripts/export_contract_fixtures.py`; CI corre el mismo script con `--check`.
 
 ### Forcing de retry/DLQ contra RabbitMQ real (`shared/tests/integration/`)
 
@@ -282,7 +339,7 @@ El contenedor se levanta una vez por sesión y lo comparten los 3 tests. El fixt
 
 ### Tests e2e (`tests/e2e/`)
 
-Ejercitan el **stack real completo** (RabbitMQ + 2x Postgres + Mailpit + los 3 servicios), levantado con `make up` — sin mocks ni dependency overrides. Se observa el resultado solo a través de fronteras públicas: la API HTTP de `order-service` y la API de Mailpit (`/api/v1/search` por destinatario y `/api/v1/message/{ID}` para el cuerpo).
+Ejercitan el **stack real completo** (RabbitMQ + 3x Postgres + Mailpit + los 4 servicios), levantado con `make up` — sin mocks ni dependency overrides. Se observa el resultado solo a través de fronteras públicas: la API HTTP de `order-service`, la de `assistant-service` y la API de Mailpit (`/api/v1/search` por destinatario y `/api/v1/message/{ID}` para el cuerpo).
 
 ```bash
 make up        # levanta el stack completo
@@ -293,10 +350,11 @@ Cubren:
 
 - **Camino feliz**: `POST /v1/orders` con `SKU-001` (stock=100) -> polling hasta `status == "confirmed"` -> verifica el email de confirmación en Mailpit.
 - **Camino de rechazo**: `POST /v1/orders` con `SKU-005` pidiendo `quantity=999` -> polling hasta `status == "rejected"` -> verifica el email de rechazo (incluye el SKU insuficiente) en Mailpit.
+- **Timeline del asistente**: los mismos dos caminos, con polling hasta que `GET /v1/assistant/orders/{id}/timeline` muestra los tres eventos en orden (`order.created`, `stock.reserved` | `stock.rejected`, `order.confirmed` | `order.rejected`). Verifica el estado, el total, los ítems, el motivo del rechazo y que el `X-Correlation-ID` del POST llegue a cada evento. Un pedido desconocido responde 404.
 
-Ambos usan **polling con timeout** (`wait_until`, sin `sleep` fijos) porque la propagación entre servicios es asíncrona. Marcados `@pytest.mark.e2e`.
+Todos usan **polling con timeout** (`wait_until`, sin `sleep` fijos) porque la propagación entre servicios es asíncrona. Marcados `@pytest.mark.e2e`.
 
-Antes del primer test, la suite espera a que los 3 `/health` reporten la base y el broker sanos, y a que Mailpit responda `/readyz`. Un 200 no alcanza, porque `/health` responde 200 con el broker caído ([ADR-0014](docs/adr/0014-health-siempre-200.md)): con el stack recién levantado, un consumer que todavía se está conectando no tiene su cola, y el exchange descarta los eventos que llegan antes.
+Antes del primer test, la suite espera a que los 4 `/health` reporten la base y el broker sanos, y a que Mailpit responda `/readyz`. Un 200 no alcanza, porque `/health` responde 200 con el broker caído ([ADR-0014](docs/adr/0014-health-siempre-200.md)): con el stack recién levantado, un consumer que todavía se está conectando no tiene su cola, y el exchange descarta los eventos que llegan antes.
 
 Dos decisiones sobre el **alcance** de esta suite están registradas como ADR:
 
@@ -325,6 +383,8 @@ en [`docs/deploy.md`](docs/deploy.md).
   `python3 scripts/generate_env.py --template deploy/env.production.example
   --output .env.production` la copia con contraseñas aleatorias.
 - `deploy/deploy.sh`: re-deploy idempotente (`git pull` + `up -d --build`).
+- `assistant-service` corre en el stack de producción pero todavía no tiene ruta
+  en Caddy: se publica junto con el deploy (paso 4 del [roadmap](docs/roadmap.md)).
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
@@ -343,12 +403,13 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 | `tests-broker` | El forcing test rápido de retry/DLQ contra un **RabbitMQ real** (testcontainers en el Docker del runner) |
 | `tests-db` (matrix: order, inventory) | `pytest` con cobertura sobre un **Postgres 16** efímero (service container con healthcheck `pg_isready`) |
 | `tests` (notification) | `pytest` con cobertura, sin DB |
-| `build-images` (matrix: amd64, arm64) | Construye las 3 imágenes con `docker compose build` y verifica que `shared.*` y `app.main` se importen dentro de cada una. arm64 corre en un runner ARM nativo, como la VM de producción, y además baja las imágenes de terceros del stack de producción |
+| `assistant-service` | Node 24: oxlint, `tsc --noEmit`, Prettier y Vitest con cobertura contra un Postgres 16 de servicio; además verifica que los fixtures de contratos coincidan con `shared/contracts` |
+| `build-images` (matrix: amd64, arm64) | Construye las 4 imágenes con `docker compose build` y verifica que `shared.*` y `app.main` se importen dentro de cada una (en `assistant-service`, `dist/app.module.js` y `prisma --version`, que necesita el binario de Prisma para esa arquitectura). arm64 corre en un runner ARM nativo, como la VM de producción, y además baja las imágenes de terceros del stack de producción |
 
 - **Python 3.12** instalado por uv (`astral-sh/setup-uv@v4`, versión fija); cada job sincroniza solo su paquete del workspace con `uv sync --frozen`. `actions/checkout@v4`, `actions/upload-artifact@v4`.
-- **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` y `notification-service` están en **85**; `inventory-service` en **80**.
+- **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` y `notification-service` están en **85**; `inventory-service` en **80**. En `assistant-service` está en `vitest.config.ts` (**80** de líneas y sentencias).
 - El `coverage.xml` de cada servicio se sube como artefacto (`coverage-<servicio>`).
-- **Sin contraseñas en CI:** el Postgres de `tests-db` usa `POSTGRES_HOST_AUTH_METHOD: trust` (es desechable y solo lo alcanza ese job), y `build-images` genera el entorno de compose con `scripts/generate_env.py`.
+- **Sin contraseñas en CI:** los Postgres de `tests-db` y `assistant-service` usan `POSTGRES_HOST_AUTH_METHOD: trust` (son desechables y solo los alcanza su job), y `build-images` genera el entorno de compose con `scripts/generate_env.py`.
 - Los **tests e2e no corren en CI** ([ADR-0017](docs/adr/0017-tests-e2e-solo-local-no-en-ci.md)).
 
 ---
@@ -365,11 +426,12 @@ Las más significativas:
 | [0006](docs/adr/0006-idempotencia-con-processed-events.md) | Idempotencia en la misma transacción que el negocio | RabbitMQ es *at-least-once*; `INSERT ... ON CONFLICT` + Unit of Work hacen que reprocesar sea un no-op |
 | [0007](docs/adr/0007-reserva-de-stock-atomica.md) | Reserva de stock con `UPDATE` condicional + `SAVEPOINT` | Elimina el *check-then-act*: PostgreSQL serializa vía row-level locking |
 | [0011](docs/adr/0011-retry-con-backoff-y-dlq.md) | Retry con backoff de 3 etapas + DLQ sin plugins | Colas TTL + dead-letter, con clasificación transient/permanent |
-| [0012](docs/adr/0012-logging-json-y-correlation-id.md) | Correlation ID end-to-end | Una orden se traza por los 3 servicios con un solo `jq` |
+| [0012](docs/adr/0012-logging-json-y-correlation-id.md) | Correlation ID end-to-end | Una orden se traza por los 4 servicios con un solo `jq` |
 | [0013](docs/adr/0013-resiliencia-de-conexion-al-broker.md) | Retry en cold start + watchdog | `connect_robust` no reintenta el primer connect: un servicio quedaba zombie tras un arranque en frío |
 | [0008](docs/adr/0008-tests-contra-postgres-real.md) | Tests de integración contra PostgreSQL real | Con SQLite, los tests de race-condition pasan sin probar nada |
+| [0021](docs/adr/0021-assistant-service-en-typescript.md) | Un servicio en TypeScript sobre los mismos eventos | El contrato es el JSON en el cable: zod replica Pydantic y los fixtures exportados detectan la deriva en CI |
 
-**[Ver los 20 ADRs →](docs/adr/README.md)**
+**[Ver los 21 ADRs →](docs/adr/README.md)**
 
 ---
 
@@ -392,7 +454,7 @@ El sistema expone el **pilar de métricas** como complemento al logging JSON est
 
 | Componente | Puerto | Descripción |
 |---|---|---|
-| **Prometheus** | `9090` | Scraping de los 3 servicios + RabbitMQ |
+| **Prometheus** | `9090` | Scraping de los 4 servicios + RabbitMQ |
 | **Grafana** | `3000` | Dashboard con provisioning automático |
 | **RabbitMQ** metrics | `15692` | Plugin `rabbitmq_prometheus`: `/metrics` agregado y `/metrics/detailed` por cola |
 
@@ -405,7 +467,7 @@ El sistema expone el **pilar de métricas** como complemento al logging JSON est
 | `edo_events_retried_total` | Counter | `queue` | Reintentos de eventos |
 | `edo_event_processing_seconds` | Histogram | `service` | Latencia de procesamiento |
 
-HTTP metrics automáticas (por servicio) vía `prometheus-fastapi-instrumentator`.
+HTTP metrics automáticas en los servicios Python vía `prometheus-fastapi-instrumentator`. `assistant-service` exporta las mismas `edo_*` con `prom-client`, más las métricas por defecto del proceso de Node; un evento duplicado no cuenta como procesado, igual que en Python.
 
 ### Levantar el stack de observabilidad
 
@@ -418,7 +480,7 @@ docker compose up -d prometheus grafana
 
 El dashboard **Event-Driven Orders** carga automáticamente al iniciar Grafana (provisioning). Incluye paneles para throughput, latencia p95, DLQ, reintentos y profundidad de colas RabbitMQ.
 
-El panel **RabbitMQ Queue Depth** muestra una línea por cola (las 15: las 3 principales, sus retry y sus DLQ) con `rabbitmq_detailed_queue_messages_ready` y `rabbitmq_detailed_queue_messages_unacked`. Prometheus las scrapea de `/metrics/detailed?family=queue_coarse_metrics` (job `rabbitmq-queues`), porque el `/metrics` del plugin entrega una sola serie agregada, sin label `queue`.
+El panel **RabbitMQ Queue Depth** muestra una línea por cola (las 20: las 4 principales, sus retry y sus DLQ) con `rabbitmq_detailed_queue_messages_ready` y `rabbitmq_detailed_queue_messages_unacked`. Prometheus las scrapea de `/metrics/detailed?family=queue_coarse_metrics` (job `rabbitmq-queues`), porque el `/metrics` del plugin entrega una sola serie agregada, sin label `queue`.
 
 ### Screenshot del dashboard
 
@@ -427,5 +489,7 @@ El panel **RabbitMQ Queue Depth** muestra una línea por cola (las 15: las 3 pri
 ## Estado
 
 **MVP completo.** Los 3 servicios, el flujo end-to-end, DLQ + retries con backoff, observabilidad (logging JSON + correlation ID + métricas) y el stack de despliegue están implementados y cubiertos por tests.
+
+**En curso: `assistant-service`** (paso 3 del [roadmap](docs/roadmap.md)). La proyección de eventos y el timeline están listos; el asistente con IA y Redis llegan en el próximo PR ([plan](docs/plan-assistant-service.md)).
 
 Lo que queda fuera del alcance está en [Mejoras futuras](#mejoras-futuras-post-mvp); el porqué de cada decisión —y de cada limitación aceptada— está en el [registro de ADRs](docs/adr/README.md).
