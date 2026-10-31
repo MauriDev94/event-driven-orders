@@ -311,10 +311,15 @@ automático):
 - `docker-compose.prod.yml`: override de producción (sin exponer Postgres/AMQP
   al host, `restart: always`, agrega `caddy`).
 - `deploy/Caddyfile`: reverse proxy — `order-service` público en el dominio
-  raíz; RabbitMQ Management UI, Mailpit UI y Grafana en `rabbitmq.`,
-  `mailpit.` y `grafana.<DOMAIN>`, detrás de basic auth. Grafana pide además
-  su propio login, y Caddy no le reenvía el header `Authorization`: Grafana
-  lo tomaría como un intento de login fallido de `admin` y lo bloquearía.
+  raíz; Mailpit UI y Grafana en `mailpit.` y `grafana.<DOMAIN>`, detrás de
+  basic auth. Grafana pide además su propio login, y Caddy no le reenvía el
+  header `Authorization`: Grafana lo tomaría como un intento de login fallido
+  de `admin` y lo bloquearía.
+- RabbitMQ Management UI: no se publica en internet. El override la deja en
+  `127.0.0.1:15672` de la VM y se entra por túnel SSH
+  (`ssh -L 15672:127.0.0.1:15672 <usuario>@<vm>`, después
+  <http://localhost:15672>). Detrás del basic auth de Caddy no funciona: su
+  JavaScript manda su propio header `Authorization` en cada llamada a la API.
 - `deploy/env.production.example`: plantilla de producción, sin contraseñas.
   `python3 scripts/generate_env.py --template deploy/env.production.example
   --output .env.production` la copia con contraseñas aleatorias.
