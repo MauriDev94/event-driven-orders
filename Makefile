@@ -2,6 +2,8 @@
 .DEFAULT_GOAL := help
 
 SERVICES := order-service inventory-service notification-service
+# TypeScript/NestJS: npm, outside the uv workspace.
+ASSISTANT := services/assistant-service
 
 # Single shared venv at the repo root; `uv sync` populates it from the
 # workspace pyproject.toml + uv.lock. All commands run via `uv run`, which
@@ -15,10 +17,11 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
 
-install: ## Create the shared .venv and install every workspace member (runtime + dev)
+install: ## Create the shared .venv (every workspace member) and assistant-service's node_modules
 	$(UV) sync
+	cd $(ASSISTANT) && npm ci
 
-env: ## Write .env from .env.example with random passwords (never overwrites)
+env: ## Write .env from .env.example with random passwords; an existing .env only gets the missing keys
 	$(UV) run --no-project python scripts/generate_env.py
 
 up: ## Start the full stack (infra + services) in the background
@@ -43,6 +46,8 @@ test: ## Run every service's test suite with coverage (enforces the per-service 
 	done
 	@echo "==> testing shared"
 	@(cd shared && $(UV) run --package shared pytest -q -m "not integration") || exit 1
+	@echo "==> testing assistant-service"
+	@(cd $(ASSISTANT) && npm run test:cov) || exit 1
 
 test-broker: ## Run the 3 retry/DLQ forcing tests against a real RabbitMQ (Docker, ~4.5 min)
 	@(cd shared && $(UV) run --package shared pytest -q -m integration tests/integration/) || exit 1
@@ -55,12 +60,15 @@ lint: ## Lint + format check + type check every service and the shared package
 	$(UV) run --package shared ruff check shared
 	$(UV) run --package shared ruff format --check shared
 	cd shared && $(UV) run --package shared mypy src
+	@echo "==> linting assistant-service"
+	@(cd $(ASSISTANT) && npm run lint && npm run typecheck && npm run format:check) || exit 1
 
-format: ## Auto-format every service and the shared package with ruff
+format: ## Auto-format every service and the shared package (ruff; prettier for assistant-service)
 	@for svc in $(SERVICES); do \
 		(cd services/$$svc && $(UV) run ruff format .); \
 	done
 	$(UV) run --package shared ruff format shared
+	cd $(ASSISTANT) && npm run format
 
 e2e: ## Run e2e tests against the real stack (requires `make up` first)
 	$(UV) run --package event-driven-orders-e2e pytest tests/e2e -q -m e2e

@@ -14,10 +14,14 @@
     "start:prod": "node dist/main.js",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "prelint": "prisma generate",
     "lint": "oxlint --type-aware src/ test/",
+    "pretypecheck": "prisma generate",
     "typecheck": "tsc --noEmit",
+    "pretest": "prisma generate",
     "test": "vitest run",
     "test:watch": "vitest",
+    "pretest:cov": "prisma generate",
     "test:cov": "vitest run --coverage"
   },
   "dependencies": {
