@@ -8,8 +8,9 @@ on:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Lint + format + type-check every service. Matrix fans out over the three
-  # services; each runs ruff check, ruff format --check and mypy over its app/.
+  # Lint + format + type-check every Python service. Matrix fans out over the
+  # three; each runs ruff check, ruff format --check and mypy over its app/.
+  # assistant-service (TypeScript) has its own job below.
   # ---------------------------------------------------------------------------
   quality:
     name: Quality (${{ matrix.service }})
@@ -263,7 +264,83 @@ jobs:
           path: services/notification-service/coverage.xml
 
   # ---------------------------------------------------------------------------
-  # Build the three images and smoke-test them.
+  # assistant-service (TypeScript/NestJS, ADR-0021) in one job: oxlint, tsc,
+  # prettier and the Vitest suite with its coverage gate (vitest.config.ts).
+  # Postgres is a service container with trust auth, like tests-db; the
+  # suite's global setup migrates a template database from TEST_DATABASE_URL.
+  # The consumer's integration test starts its own RabbitMQ testcontainer
+  # with a random password.
+  #
+  # The zod schemas mirror shared/contracts by hand, and their tests read JSON
+  # fixtures exported from the Pydantic models. The last step regenerates the
+  # fixtures and fails if they differ, so a contract change that the zod side
+  # didn't follow can't merge.
+  # ---------------------------------------------------------------------------
+  assistant-service:
+    name: Quality and tests (assistant-service)
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          # Same as tests-db: throwaway and reachable only from this job.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    defaults:
+      run:
+        working-directory: services/assistant-service
+
+    env:
+      TEST_DATABASE_URL: postgresql://postgres@localhost:5432/postgres
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: services/assistant-service/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Prettier check
+        run: npm run format:check
+
+      - name: Run test suite
+        run: npm run test:cov
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.12.5"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Contract fixtures match shared/contracts
+        working-directory: .
+        run: uv run --frozen --package shared python scripts/export_contract_fixtures.py --check
+
+  # ---------------------------------------------------------------------------
+  # Build the four images and smoke-test them.
   #
   # Nothing else in this pipeline touches Docker: quality and tests run against
   # the runner's own Python, and the e2e suite is local-only by design
@@ -277,7 +354,10 @@ jobs:
   # the real module graph inside each image: `shared/` proves the cross-service
   # package arrived, `app.main` proves the service's own code and its installed
   # dependencies did too. Importing `app.main` never opens a socket — the
-  # FastAPI lifespan only runs when the app starts serving.
+  # FastAPI lifespan only runs when the app starts serving. assistant-service
+  # gets the same check with `dist/app.module.js` (Nest only connects once the
+  # app is created), plus `prisma --version`, which fails if the schema engine
+  # that `migrate deploy` runs at startup is missing for the image's platform.
   #
   # The production VM (Oracle Ampere A1) is arm64, so the matrix builds and
   # smoke-tests on a native arm64 runner too, without QEMU. GitHub's arm64
@@ -288,7 +368,7 @@ jobs:
   build-images:
     name: Build images (${{ matrix.arch }})
     runs-on: ${{ matrix.runner }}
-    needs: [quality, quality-shared]
+    needs: [quality, quality-shared, assistant-service]
     strategy:
       fail-fast: false
       matrix:
@@ -312,7 +392,7 @@ jobs:
         run: python3 scripts/generate_env.py
 
       - name: Build service images
-        run: docker compose build order-service inventory-service notification-service
+        run: docker compose build order-service inventory-service notification-service assistant-service
 
       - name: Smoke — shared/ and app/ made it into every image
         run: |
@@ -322,6 +402,12 @@ jobs:
               "import platform, shared.contracts.order_events, shared.observability.metrics, app.main; print('ok', platform.machine())"
             echo "::endgroup::"
           done
+
+      - name: Smoke — assistant-service's build and Prisma engine made it into the image
+        run: |
+          docker compose run --rm --no-deps assistant-service node -e \
+            "import('./dist/app.module.js').then(() => console.log('ok', process.arch))"
+          docker compose run --rm --no-deps assistant-service node node_modules/prisma/build/index.js --version
 
       - name: Third-party images exist for arm64
         if: matrix.arch == 'arm64'
