@@ -14,7 +14,7 @@ assignees: ""
 - [ ] `inventory-service`
 - [ ] `notification-service`
 - [ ] `shared/contracts`
-- [ ] Infra (RabbitMQ / Postgres / Mailhog / docker-compose)
+- [ ] Infra (RabbitMQ / Postgres / Mailpit / docker-compose)
 
 ## Pasos para reproducir
 1.

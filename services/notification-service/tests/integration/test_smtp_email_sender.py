@@ -1,6 +1,6 @@
 """Integration tests for the SMTP EmailSender adapter.
 
-``smtplib.SMTP`` is mocked — we never open a real socket or hit Mailhog. We
+``smtplib.SMTP`` is mocked — we never open a real socket or hit Mailpit. We
 assert the adapter builds the message correctly and maps transport failures to
 ``NotificationError``.
 """

@@ -28,7 +28,7 @@ Sistema de e-commerce dividido en **3 microservicios** que se comunican exclusiv
        │ order.confirmed / order.rejected
        ▼
 ┌─────────────────────┐
-│ notification-service │  envía email (Mailhog)
+│ notification-service │  envía email (Mailpit)
 └─────────────────────┘
 ```
 
@@ -39,7 +39,7 @@ sequenceDiagram
     participant Q as RabbitMQ
     participant I as inventory-service
     participant N as notification-service
-    participant M as Mailhog
+    participant M as Mailpit
 
     C->>O: POST /v1/orders
     O->>O: persiste orden (pending)
@@ -61,7 +61,7 @@ sequenceDiagram
 |---|---|---|
 | `order-service` | FastAPI (REST + consumer) | Crea órdenes, orquesta el ciclo de vida, expone `/v1/orders` |
 | `inventory-service` | Worker (consumer) | Reserva stock con transacción atómica anti race-condition |
-| `notification-service` | Worker (consumer) | Envía notificaciones por email (Mailhog) |
+| `notification-service` | Worker (consumer) | Envía notificaciones por email (Mailpit) |
 
 ## Stack
 
@@ -72,7 +72,7 @@ sequenceDiagram
 | Mensajería | RabbitMQ + `aio-pika` |
 | Persistencia | PostgreSQL 16 (database-per-service) + SQLAlchemy + Alembic |
 | Validación / contratos | Pydantic v2 |
-| Email (dev) | Mailhog (SMTP + API de inspección) |
+| Email (dev) | Mailpit (SMTP + API de inspección, multi-arquitectura) |
 | Observabilidad | `structlog` (logging JSON) + correlation ID por contexto |
 | Testing | pytest, pytest-asyncio, `testcontainers` (Postgres y RabbitMQ reales), httpx |
 | Lint / types | ruff + mypy |
@@ -105,7 +105,7 @@ Cada servicio aplica **Clean Architecture + DDD** (capas `domain` / `application
 
 ```
 event-driven-orders/
-├── docker-compose.yml          # RabbitMQ + 2x Postgres + Mailhog + 3 servicios
+├── docker-compose.yml          # RabbitMQ + 2x Postgres + Mailpit + 3 servicios
 ├── .env.example                # variables para docker-compose
 ├── Makefile                    # install / up / down / logs / ps / test / lint / format / e2e
 ├── .github/                    # CI (ci.yml) + plantillas de PR/issues + CODEOWNERS
@@ -140,7 +140,7 @@ make down      # detener
 | inventory-service `/health` | http://localhost:8002/health |
 | notification-service `/health` | http://localhost:8003/health |
 | RabbitMQ Management | http://localhost:15672 (usuario `guest`, contraseña `RABBITMQ_DEFAULT_PASS` de tu `.env`) |
-| Mailhog UI | http://localhost:8025 |
+| Mailpit UI | http://localhost:8025 |
 | Postgres orders / inventory | localhost:5433 / localhost:5434 |
 
 ### Catálogo seed (`inventory-service`)
@@ -187,7 +187,7 @@ curl http://localhost:8001/v1/orders/<order_id>   # status: "confirmed"
 Invoke-RestMethod -Uri "http://localhost:8001/v1/orders/<order_id>"   # status: "confirmed"
 ```
 
-Y en Mailhog (http://localhost:8025) llega un email "Your order `<order_id>` is confirmed" a `c-1@example.com`.
+Y en Mailpit (http://localhost:8025) llega un email "Your order `<order_id>` is confirmed" a `c-1@example.com`.
 
 ### Camino de rechazo (stock insuficiente)
 
@@ -282,7 +282,7 @@ El contenedor se levanta una vez por sesión y lo comparten los 3 tests. El fixt
 
 ### Tests e2e (`tests/e2e/`)
 
-Ejercitan el **stack real completo** (RabbitMQ + 2x Postgres + Mailhog + los 3 servicios), levantado con `make up` — sin mocks ni dependency overrides. Se observa el resultado solo a través de fronteras públicas: la API HTTP de `order-service` y la API de Mailhog (`/api/v2/messages`).
+Ejercitan el **stack real completo** (RabbitMQ + 2x Postgres + Mailpit + los 3 servicios), levantado con `make up` — sin mocks ni dependency overrides. Se observa el resultado solo a través de fronteras públicas: la API HTTP de `order-service` y la API de Mailpit (`/api/v1/search` por destinatario y `/api/v1/message/{ID}` para el cuerpo).
 
 ```bash
 make up        # levanta el stack completo
@@ -291,12 +291,12 @@ make e2e        # instala deps de tests/e2e/ y corre pytest -m e2e
 
 Cubren:
 
-- **Camino feliz**: `POST /v1/orders` con `SKU-001` (stock=100) -> polling hasta `status == "confirmed"` -> verifica el email de confirmación en Mailhog.
-- **Camino de rechazo**: `POST /v1/orders` con `SKU-005` pidiendo `quantity=999` -> polling hasta `status == "rejected"` -> verifica el email de rechazo (incluye el SKU insuficiente) en Mailhog.
+- **Camino feliz**: `POST /v1/orders` con `SKU-001` (stock=100) -> polling hasta `status == "confirmed"` -> verifica el email de confirmación en Mailpit.
+- **Camino de rechazo**: `POST /v1/orders` con `SKU-005` pidiendo `quantity=999` -> polling hasta `status == "rejected"` -> verifica el email de rechazo (incluye el SKU insuficiente) en Mailpit.
 
 Ambos usan **polling con timeout** (`wait_until`, sin `sleep` fijos) porque la propagación entre servicios es asíncrona. Marcados `@pytest.mark.e2e`.
 
-Antes del primer test, la suite espera a que los 3 `/health` reporten la base y el broker sanos. Un 200 no alcanza, porque `/health` responde 200 con el broker caído ([ADR-0014](docs/adr/0014-health-siempre-200.md)): con el stack recién levantado, un consumer que todavía se está conectando no tiene su cola, y el exchange descarta los eventos que llegan antes.
+Antes del primer test, la suite espera a que los 3 `/health` reporten la base y el broker sanos, y a que Mailpit responda `/readyz`. Un 200 no alcanza, porque `/health` responde 200 con el broker caído ([ADR-0014](docs/adr/0014-health-siempre-200.md)): con el stack recién levantado, un consumer que todavía se está conectando no tiene su cola, y el exchange descarta los eventos que llegan antes.
 
 Dos decisiones sobre el **alcance** de esta suite están registradas como ADR:
 
@@ -311,7 +311,7 @@ automático):
 - `docker-compose.prod.yml`: override de producción (sin exponer Postgres/AMQP
   al host, `restart: always`, agrega `caddy`).
 - `deploy/Caddyfile`: reverse proxy — `order-service` público, RabbitMQ
-  Management UI y Mailhog UI detrás de basic auth.
+  Management UI y Mailpit UI detrás de basic auth.
 - `deploy/env.production.example`: plantilla de producción, sin contraseñas.
   `python3 scripts/generate_env.py --template deploy/env.production.example
   --output .env.production` la copia con contraseñas aleatorias.

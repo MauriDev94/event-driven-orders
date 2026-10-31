@@ -26,7 +26,7 @@ class SendOrderNotification(UseCase[SendOrderNotificationParams, SendOrderNotifi
 
     Orchestration only: it composes the customer-facing message from the order
     outcome and hands it to the ``EmailSender`` port. The transport detail
-    (SMTP/Mailhog) lives in infrastructure — the use case never touches it.
+    (SMTP/Mailpit) lives in infrastructure — the use case never touches it.
     """
 
     def __init__(self, email_sender: EmailSender) -> None:
