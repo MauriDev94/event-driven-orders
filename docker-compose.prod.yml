@@ -8,20 +8,26 @@
 # Cambios respecto al stack de dev (docker-compose.yml):
 #   - restart: always en todos los servicios.
 #   - Las bases de datos NO exponen puertos al host (solo red interna edo_net).
-#   - RabbitMQ no expone 5672/15672 al host; la management UI entra vía Caddy.
+#   - RabbitMQ no expone AMQP (5672) ni las métricas al host. La management UI
+#     se publica solo en 127.0.0.1:15672 de la VM y se entra por túnel SSH:
+#       ssh -L 15672:127.0.0.1:15672 <usuario>@<vm>   ->  http://localhost:15672
+#     No va detrás de Caddy: su JavaScript manda su propio header Authorization
+#     en cada llamada a /api/, y el basic auth de Caddy lo rechazaría.
 #   - Se agrega Caddy como reverse proxy con auto-HTTPS (Let's Encrypt),
 #     único punto de entrada desde internet (puertos 80/443).
 #
-# Requisito: Docker Compose >= 2.24 (enero 2024) para que `!reset []` limpie
-# los `ports` heredados del compose base. Verificar con `docker compose version`
-# (Ubuntu/Docker oficiales en 2026 ya cumplen de sobra). En versiones más
-# viejas `!reset` se ignora sin error, pero los puertos quedarían publicados.
+# Requisito: Docker Compose >= 2.24.4 (enero 2024) para que `!reset []` limpie
+# los `ports` heredados del compose base y `!override` los reemplace. Verificar
+# con `docker compose version` (Ubuntu/Docker oficiales en 2026 ya cumplen de
+# sobra). En versiones más viejas se ignoran sin error, pero los puertos del
+# compose base quedarían publicados.
 # ----------------------------------------------------------------------------
 
 services:
   rabbitmq:
     restart: always
-    ports: !reset []
+    ports: !override
+      - "127.0.0.1:15672:15672"  # Management UI, only through an SSH tunnel
 
   postgres-orders:
     restart: always
@@ -67,8 +73,6 @@ services:
       - "443:443"
     environment:
       DOMAIN: ${DOMAIN}
-      RABBITMQ_UI_USER: ${RABBITMQ_UI_USER}
-      RABBITMQ_UI_PASSWORD_HASH: ${RABBITMQ_UI_PASSWORD_HASH}
       MAILPIT_UI_USER: ${MAILPIT_UI_USER}
       MAILPIT_UI_PASSWORD_HASH: ${MAILPIT_UI_PASSWORD_HASH}
       GRAFANA_UI_USER: ${GRAFANA_UI_USER}
@@ -79,7 +83,6 @@ services:
       - caddy_config:/config
     depends_on:
       - order-service
-      - rabbitmq
       - mailpit
       - grafana
     networks:
