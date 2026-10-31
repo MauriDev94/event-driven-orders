@@ -1,3 +1,4 @@
+import { inject } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -46,7 +47,7 @@ describe('assistant-service HTTP API', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
     await database.drop();
   });
 

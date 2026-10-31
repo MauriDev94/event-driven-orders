@@ -1,3 +1,4 @@
+import { inject } from 'vitest';
 import { PrismaService } from '../../../../src/core/database/prisma.service.js';
 import { ConcurrentUpdateError } from '../../../../src/features/order-history/application/contracts/order-history.repository.js';
 import { toProjectionCommand } from '../../../../src/features/order-history/application/mappers/order-event.mapper.js';
