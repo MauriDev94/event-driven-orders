@@ -132,7 +132,7 @@ make logs      # seguir logs
 make down      # detener
 ```
 
-`make env` copia `.env.example` a `.env` y llena cada contraseña vacía (RabbitMQ, las dos bases y Grafana) con un valor aleatorio. `.env` no se versiona, y `docker compose` no arranca si falta alguna contraseña. Si lo regeneras con `--force`, corre `docker compose down -v`: Postgres y Grafana guardan la contraseña con la que se creó su volumen.
+`make env` copia `.env.example` a `.env` y llena cada contraseña vacía (RabbitMQ, las dos bases y Grafana) con un valor aleatorio. `.env` no se versiona, y `docker compose` no arranca si falta alguna contraseña. Si lo regeneras con `--force`, corre `docker compose down -v`: Postgres, Grafana y RabbitMQ guardan la contraseña con la que se creó su volumen.
 
 | Servicio / infra | URL local |
 |---|---|

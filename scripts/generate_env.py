@@ -9,8 +9,8 @@ line is copied as is. The generated secrets are never printed.
         --output .env.production                      # production, on the VM
 
 An existing output file is never overwritten unless ``--force`` is passed:
-Postgres and Grafana keep the password their volume was first created with,
-so new secrets also need ``docker compose down -v``.
+Postgres, Grafana and RabbitMQ keep the password their volume was first
+created with, so new secrets also need ``docker compose down -v``.
 
 Standard library only, so it runs with any Python 3 (CI uses the runner's).
 """
