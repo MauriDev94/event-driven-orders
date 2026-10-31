@@ -44,6 +44,27 @@ export const EVENTS_RETRIED = counter(
   ['queue'],
 );
 
+// The assistant's own metrics. `outcome` is answered, no_data, ungrounded,
+// max_iterations, rate_limited or error; the token counter shows how much of
+// the model's free quota the questions use.
+export const ASSISTANT_QUESTIONS = counter(
+  'edo_assistant_questions_total',
+  'Questions to the assistant, by outcome',
+  ['outcome'],
+);
+
+export const ASSISTANT_TOOL_CALLS = counter(
+  'edo_assistant_tool_calls_total',
+  'Tool calls requested by the model, by tool',
+  ['tool'],
+);
+
+export const ASSISTANT_LLM_TOKENS = counter(
+  'edo_assistant_llm_tokens_total',
+  'Model tokens reported by the provider, by direction (input or output)',
+  ['direction'],
+);
+
 export const EVENT_PROCESSING_SECONDS = histogram(
   'edo_event_processing_seconds',
   'Handler processing latency in seconds',

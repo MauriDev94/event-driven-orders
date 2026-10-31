@@ -1,9 +1,11 @@
 import { Module } from '@nestjs/common';
+import { RedisConnection } from '../../core/cache/redis.connection.js';
 import { OrderHistoryRepository } from './application/contracts/order-history.repository.js';
 import { TimelineCache } from './application/contracts/timeline-cache.js';
 import { GetOrderTimeline } from './application/usecases/get-order-timeline.js';
 import { ProjectOrderEvent } from './application/usecases/project-order-event.js';
 import { PrismaOrderHistoryRepository } from './infrastructure/prisma-order-history.repository.js';
+import { RedisTimelineCache } from './infrastructure/redis-timeline-cache.js';
 import { OrderEventsConsumer } from './presentation/consumers/order-events.consumer.js';
 import { OrderTimelineController } from './presentation/http/order-timeline.controller.js';
 
@@ -13,12 +15,9 @@ import { OrderTimelineController } from './presentation/http/order-timeline.cont
   providers: [
     { provide: OrderHistoryRepository, useClass: PrismaOrderHistoryRepository },
     {
-      // Pass-through until the Redis adapter lands.
       provide: TimelineCache,
-      useValue: {
-        getOrLoad: (_orderId: string, load: () => Promise<unknown>) => load(),
-        invalidate: async () => {},
-      },
+      useFactory: (redis: RedisConnection) => new RedisTimelineCache(redis),
+      inject: [RedisConnection],
     },
     {
       provide: ProjectOrderEvent,
@@ -34,5 +33,7 @@ import { OrderTimelineController } from './presentation/http/order-timeline.cont
     },
     OrderEventsConsumer,
   ],
+  // The assistant's get_order_timeline tool reads through the same cache.
+  exports: [GetOrderTimeline],
 })
 export class OrderHistoryModule {}

@@ -3,6 +3,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { ENV, type Env } from './core/config/env.js';
 import { CoreModule } from './core/core.module.js';
 import { loggerParams } from './core/observability/logging.js';
+import { AssistantModule } from './features/assistant/assistant.module.js';
 import { OrderHistoryModule } from './features/order-history/order-history.module.js';
 
 @Module({
@@ -13,6 +14,7 @@ import { OrderHistoryModule } from './features/order-history/order-history.modul
       useFactory: (env: Env) => loggerParams(env),
     }),
     OrderHistoryModule,
+    AssistantModule,
   ],
 })
 export class AppModule {}

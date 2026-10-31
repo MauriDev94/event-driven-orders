@@ -20,6 +20,13 @@ export interface AssistantTool {
   run(args: Record<string, unknown>): Promise<ToolRun>;
 }
 
+/** For the metrics: a name the model made up becomes `unknown`. */
+export const TOOL_NAMES: ReadonlySet<string> = new Set([
+  'get_order_timeline',
+  'search_orders',
+  'rejection_summary',
+]);
+
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 86_400_000;
 
