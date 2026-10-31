@@ -1,7 +1,7 @@
 """Fixtures for the end-to-end suite.
 
-These tests run against the REAL stack started by `make up` (RabbitMQ + 2x
-Postgres + Mailpit + the 3 services) — no mocks, no dependency overrides. The
+These tests run against the REAL stack started by `make up` (RabbitMQ + 3x
+Postgres + Mailpit + the 4 services) — no mocks, no dependency overrides. The
 only "test doubles" are Mailpit (a real SMTP server with an inspection API)
 and the public HTTP APIs each service already exposes.
 
@@ -22,6 +22,7 @@ import pytest
 ORDER_SERVICE_URL = os.getenv("E2E_ORDER_SERVICE_URL", "http://localhost:8001")
 INVENTORY_SERVICE_URL = os.getenv("E2E_INVENTORY_SERVICE_URL", "http://localhost:8002")
 NOTIFICATION_SERVICE_URL = os.getenv("E2E_NOTIFICATION_SERVICE_URL", "http://localhost:8003")
+ASSISTANT_SERVICE_URL = os.getenv("E2E_ASSISTANT_SERVICE_URL", "http://localhost:8004")
 MAILPIT_URL = os.getenv("E2E_MAILPIT_URL", "http://localhost:8025")
 
 DEFAULT_TIMEOUT = float(os.getenv("E2E_TIMEOUT", "30"))
@@ -31,12 +32,19 @@ SERVICE_URLS = {
     "order-service": ORDER_SERVICE_URL,
     "inventory-service": INVENTORY_SERVICE_URL,
     "notification-service": NOTIFICATION_SERVICE_URL,
+    "assistant-service": ASSISTANT_SERVICE_URL,
 }
 
 
 @pytest.fixture(scope="session")
 def order_client() -> Any:
     with httpx.Client(base_url=ORDER_SERVICE_URL, timeout=10.0) as client:
+        yield client
+
+
+@pytest.fixture(scope="session")
+def assistant_client() -> Any:
+    with httpx.Client(base_url=ASSISTANT_SERVICE_URL, timeout=10.0) as client:
         yield client
 
 
@@ -68,16 +76,16 @@ def _not_ready(client: httpx.Client, mailpit_client: httpx.Client) -> dict[str, 
 
 @pytest.fixture(scope="session", autouse=True)
 def _wait_for_stack(mailpit_client: httpx.Client) -> None:
-    """Block until the 3 services report database and broker healthy, and
+    """Block until the 4 services report database and broker healthy, and
     Mailpit is ready.
 
     A 200 from ``/health`` is not enough: it answers 200 with the broker down
     (ADR-0014). Right after ``make up`` a consumer may still be connecting,
     so its queue doesn't exist yet and the topic exchange drops any event
-    published to it: the first order would never get its email. Each
-    consumer declares its queues right after connecting, so once all 3
-    report a healthy broker the flow is wired, give or take the milliseconds
-    that declaration takes.
+    published to it: the first order would never get its email (or its
+    timeline). Each consumer declares its queues right after connecting, so
+    once all 4 report a healthy broker the flow is wired, give or take the
+    milliseconds that declaration takes.
     """
     deadline = time.monotonic() + DEFAULT_TIMEOUT * 2
     missing: dict[str, str] = {}
