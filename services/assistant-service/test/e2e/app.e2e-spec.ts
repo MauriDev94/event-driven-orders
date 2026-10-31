@@ -25,6 +25,7 @@ async function createApp(
       loadEnv({
         DATABASE_URL: databaseUrl,
         RABBITMQ_URL: 'amqp://broker@localhost:5672/',
+        REDIS_URL: inject('redisUrl'),
         LOG_LEVEL: 'silent',
       }),
     )
