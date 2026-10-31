@@ -4,7 +4,7 @@ from app.features.notifications.domain.entities.notification import Notification
 
 
 class EmailSender(ABC):
-    """Outbound email port. Implemented in infrastructure (SMTP/Mailhog)."""
+    """Outbound email port. Implemented in infrastructure (SMTP/Mailpit)."""
 
     @abstractmethod
     def send(self, notification: Notification) -> None:

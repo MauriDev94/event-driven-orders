@@ -29,7 +29,7 @@ async def lifespan(app: FastAPI):
     """Worker lifespan: open the broker connection, declare topology and start
     consuming order-outcome events (OrderConfirmed / OrderRejected) to send
     customer emails. This service owns no database — it only reacts to events
-    and talks to SMTP (Mailhog).
+    and talks to SMTP (Mailpit).
 
     Cold start: if the broker is not reachable yet, ``connect_with_retry``
     retries with exponential backoff for a few attempts before giving up. If

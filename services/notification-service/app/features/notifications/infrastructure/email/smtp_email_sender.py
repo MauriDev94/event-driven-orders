@@ -9,7 +9,7 @@ from app.features.notifications.domain.entities.notification import Notification
 class SmtpEmailSender(EmailSender):
     """SMTP implementation of the EmailSender port.
 
-    Targets Mailhog locally (no auth, plain SMTP). Uses the stdlib ``smtplib``
+    Targets Mailpit locally (no auth, plain SMTP). Uses the stdlib ``smtplib``
     so no extra dependency is required.
     """
 

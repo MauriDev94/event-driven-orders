@@ -4,7 +4,7 @@ Invokes ``build_order_events_handler`` directly with fake aio_pika messages —
 no RabbitMQ, no SMTP. The use case runs against a SPY EmailSender so the full
 transport path is exercised: deserialize → map → use case → email (spy).
 
-Mailhog is only used for the manual ``make up`` smoke test, never here.
+Mailpit is only used for the manual ``make up`` smoke test, never here.
 """
 
 from unittest.mock import AsyncMock

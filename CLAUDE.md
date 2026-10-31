@@ -8,7 +8,7 @@ Portfolio project: an order system split into three Python 3.12 / FastAPI micros
 
 - `order-service`: REST API (`POST /v1/orders`, `GET /v1/orders/{id}`) plus a consumer for stock results. Own Postgres.
 - `inventory-service`: worker that reserves stock on `order.created`. Own Postgres.
-- `notification-service`: worker that emails on `order.confirmed` / `order.rejected` over SMTP (Mailhog). No database.
+- `notification-service`: worker that emails on `order.confirmed` / `order.rejected` over SMTP (Mailpit). No database.
 - `shared/`: uv workspace package imported by all three as `shared.*`.
 
 README, ADRs, commits, PRs and issues are in Spanish; code, comments and docstrings are in English.
@@ -26,7 +26,7 @@ README, ADRs, commits, PRs and issues are in Spanish; code, comments and docstri
 ## Commands
 
 ```bash
-make env && make up               # .env with random passwords, then RabbitMQ, 2x Postgres, Mailhog, 3 services, Prometheus, Grafana
+make env && make up               # .env with random passwords, then RabbitMQ, 2x Postgres, Mailpit, 3 services, Prometheus, Grafana
 make ps / make logs / make down
 uv sync --all-packages            # every workspace member + dev groups (CI adds --frozen)
 make lint                         # per service: ruff check, ruff format --check, mypy app; shared: same, with mypy src

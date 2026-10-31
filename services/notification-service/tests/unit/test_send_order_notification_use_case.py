@@ -1,6 +1,6 @@
 """Unit tests for the SendOrderNotification use case.
 
-The use case is tested against a FAKE EmailSender (spy) — no SMTP, no Mailhog.
+The use case is tested against a FAKE EmailSender (spy) — no SMTP, no Mailpit.
 We assert the composed Notification: recipient, subject and body content
 (order_id for both outcomes, plus the rejection reason for rejected orders).
 """

@@ -13,7 +13,7 @@ class EnvConfig(BaseSettings):
     # default `guest` user.
     rabbitmq_url: str = "amqp://localhost:5672/"
 
-    # SMTP (Mailhog locally)
+    # SMTP (Mailpit locally)
     smtp_host: str = "localhost"
     smtp_port: int = 1025
     smtp_sender_email: str = "no-reply@event-driven-orders.local"

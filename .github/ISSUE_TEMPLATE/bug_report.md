@@ -14,7 +14,7 @@ assignees: ""
 - [ ] `inventory-service`
 - [ ] `notification-service`
 - [ ] `shared/contracts`
-- [ ] Infra (RabbitMQ / Postgres / Mailhog / docker-compose)
+- [ ] Infra (RabbitMQ / Postgres / Mailpit / docker-compose)
 
 ## Pasos para reproducir
 1.
@@ -25,7 +25,7 @@ assignees: ""
 <!-- ¿Qué debería pasar? -->
 
 ## Comportamiento actual
-<!-- ¿Qué pasa en realidad? Incluí status code / body o el evento publicado si aplica. -->
+<!-- ¿Qué pasa en realidad? Incluye el status code / body o el evento publicado si aplica. -->
 
 ## Capa afectada
 - [ ] Domain (entidades / value objects / reglas de negocio)
@@ -41,7 +41,7 @@ assignees: ""
 
 ## Logs relevantes
 ```
-<!-- pegá acá las líneas de log con el correlation id -->
+<!-- pega aquí las líneas de log con el correlation id -->
 ```
 
 ## Criterios de aceptación

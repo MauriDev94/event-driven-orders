@@ -22,10 +22,10 @@ env: ## Write .env from .env.example with random passwords (never overwrites)
 	$(UV) run --no-project python scripts/generate_env.py
 
 up: ## Start the full stack (infra + services) in the background
-	docker compose up -d --build
+	docker compose up -d --build --remove-orphans
 
 down: ## Stop the stack and remove containers
-	docker compose down
+	docker compose down --remove-orphans
 
 logs: ## Tail logs from all services
 	docker compose logs -f

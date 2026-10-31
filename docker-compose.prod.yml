@@ -31,7 +31,7 @@ services:
     restart: always
     ports: !reset []
 
-  mailhog:
+  mailpit:
     restart: always
     ports: !reset []
 
@@ -70,8 +70,8 @@ services:
       DOMAIN: ${DOMAIN}
       RABBITMQ_UI_USER: ${RABBITMQ_UI_USER}
       RABBITMQ_UI_PASSWORD_HASH: ${RABBITMQ_UI_PASSWORD_HASH}
-      MAILHOG_UI_USER: ${MAILHOG_UI_USER}
-      MAILHOG_UI_PASSWORD_HASH: ${MAILHOG_UI_PASSWORD_HASH}
+      MAILPIT_UI_USER: ${MAILPIT_UI_USER}
+      MAILPIT_UI_PASSWORD_HASH: ${MAILPIT_UI_PASSWORD_HASH}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -79,7 +79,7 @@ services:
     depends_on:
       - order-service
       - rabbitmq
-      - mailhog
+      - mailpit
     networks:
       - edo_net
 
