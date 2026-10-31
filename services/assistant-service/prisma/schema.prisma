@@ -1,0 +1,59 @@
+// Read model of the order history, projected from the events on the `orders`
+// exchange. The connection URL lives in prisma7.config.ts (Prisma 7).
+
+generator client {
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum OrderStatus {
+  pending
+  confirmed
+  rejected
+}
+
+enum StockResult {
+  reserved
+  rejected
+}
+
+// One row per event received. The primary key is the idempotency check: a
+// redelivered event inserts nothing.
+model OrderEventLog {
+  eventId       String   @id @map("event_id")
+  orderId       String   @map("order_id")
+  eventType     String   @map("event_type")
+  occurredAt    DateTime @map("occurred_at") @db.Timestamptz(6)
+  correlationId String   @map("correlation_id")
+  payload       Json
+  receivedAt    DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+
+  @@index([orderId, occurredAt])
+  @@map("order_event_log")
+}
+
+// Current state of each order. Events can arrive out of order, so the
+// fields that only `order.created` carries are nullable until it arrives.
+model OrderView {
+  orderId         String       @id @map("order_id")
+  customerId      String?      @map("customer_id")
+  status          OrderStatus
+  stockResult     StockResult? @map("stock_result")
+  rejectionReason String?      @map("rejection_reason")
+  totalAmount     Decimal?     @map("total_amount") @db.Decimal(14, 2)
+  items           Json?
+  createdAt       DateTime?    @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+  lastEventAt     DateTime     @map("last_event_at") @db.Timestamptz(6)
+  // Optimistic lock: two events of the same order projected at once must not
+  // overwrite each other's changes.
+  version         Int          @default(0)
+
+  @@map("order_view")
+}

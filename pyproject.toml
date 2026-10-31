@@ -8,6 +8,8 @@
 # minimal-workspace form is the recommended uv pattern for multi-package repos.
 [tool.uv.workspace]
 members = ["shared", "services/*", "tests/e2e"]
+# TypeScript service with its own package.json; not a Python package.
+exclude = ["services/assistant-service"]
 
 # Repo-wide ruff baseline. Each service keeps its own tighter config; this is
 # for IDE convenience when linting the whole tree from the repo root.

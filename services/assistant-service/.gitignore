@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+# `prisma generate` writes the client here (npm run build, CI and the Dockerfile run it).
+src/generated/
+*.tsbuildinfo
