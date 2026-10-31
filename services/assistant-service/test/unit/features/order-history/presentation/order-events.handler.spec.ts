@@ -55,6 +55,17 @@ describe('buildOrderEventHandler', () => {
     expect(await processed('stock.reserved')).toBe(before + 1);
   });
 
+  // Same as the Python consumers: the metric counts projections, so a
+  // redelivery doesn't inflate the rate Grafana plots.
+  it('does not count a duplicate as processed', async () => {
+    execute.mockResolvedValue('duplicate');
+    const before = await processed('stock.reserved');
+
+    await handle(message(JSON.stringify(stockReserved('o-1'))));
+
+    expect(await processed('stock.reserved')).toBe(before);
+  });
+
   it('rejects a body that is not JSON as an invalid message', async () => {
     await expect(handle(message('{not json'))).rejects.toThrow(
       InvalidMessageError,
