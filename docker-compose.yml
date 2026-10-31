@@ -82,6 +82,27 @@ services:
     networks:
       - edo_net
 
+  postgres-assistant:
+    image: postgres:16-alpine
+    container_name: edo_postgres_assistant
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${ASSISTANT_DB_USER}
+      POSTGRES_PASSWORD: ${ASSISTANT_DB_PASSWORD:?}
+      POSTGRES_DB: ${ASSISTANT_DB_NAME}
+    ports:
+      - "${ASSISTANT_DB_PORT}:5432"
+    volumes:
+      - postgres_data_assistant:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ASSISTANT_DB_USER} -d ${ASSISTANT_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 90s
+    networks:
+      - edo_net
+
   # Multi-arch (the prod VM is arm64, which mailhog/mailhog never shipped).
   # The image has its own healthcheck (`mailpit readyz`).
   mailpit:
@@ -162,6 +183,27 @@ services:
     networks:
       - edo_net
 
+  # TypeScript/NestJS. Projects the five order events into its own read model;
+  # the image runs `prisma migrate deploy` before starting.
+  assistant-service:
+    build:
+      context: .
+      dockerfile: services/assistant-service/Dockerfile
+    container_name: edo_assistant_service
+    restart: unless-stopped
+    environment:
+      RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/
+      DATABASE_URL: postgresql://${ASSISTANT_DB_USER}:${ASSISTANT_DB_PASSWORD}@postgres-assistant:5432/${ASSISTANT_DB_NAME}
+    ports:
+      - "8004:8000"
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres-assistant:
+        condition: service_healthy
+    networks:
+      - edo_net
+
   # --- Observability -------------------------------------------------------
   prometheus:
     image: prom/prometheus:v3.4.1
@@ -177,6 +219,7 @@ services:
       - order-service
       - inventory-service
       - notification-service
+      - assistant-service
 
   grafana:
     image: grafana/grafana:12.0.1
@@ -199,6 +242,7 @@ volumes:
   rabbitmq_data:
   postgres_data_orders:
   postgres_data_inventory:
+  postgres_data_assistant:
   grafana_data:
 
 networks:
