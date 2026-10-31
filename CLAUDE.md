@@ -110,7 +110,7 @@ Domain entities raise `ValueError` on invariant violations (for example, confirm
 
 - Alembic lives in `app/core/data/source/local/alembic/`, and each container runs `alembic upgrade head` before uvicorn (ADR-0016), with `exec uvicorn` so uvicorn is PID 1 and gets SIGTERM (`sh` doesn't forward it, and the lifespan shutdown would never run). Run `alembic` from the service directory, because `alembic.ini` uses a relative path. Inventory's first migration seeds `SKU-001`…`SKU-005` (stock 100/50/25/10/5); the e2e tests and README examples depend on them.
 - The Docker build context is the repo root (ADR-0015). Each Dockerfile copies `pyproject.toml`, `uv.lock`, `shared/` and its own service directory, then runs `uv sync --frozen --no-dev --package <svc>`. A new runtime file must not be excluded by the root `.dockerignore`; CI's `build-images` job smoke-imports `shared.*` and `app.main` in every image.
-- Production uses the `docker-compose.prod.yml` override plus Caddy (`deploy/Caddyfile`), with env in `.env.production` (template: `deploy/env.production.example`). `DEPLOY.md` is local-only and gitignored.
+- Production uses the `docker-compose.prod.yml` override plus Caddy (`deploy/Caddyfile`), with env in `.env.production` (template: `deploy/env.production.example`). The deploy guide (Oracle Cloud Always Free, ARM) is `docs/deploy.md`.
 
 ## Conventions
 
