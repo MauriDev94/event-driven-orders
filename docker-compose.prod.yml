@@ -55,8 +55,7 @@ services:
     restart: always
     ports: !reset []
     environment:
-      GF_SERVER_ROOT_URL: https://${DOMAIN}/grafana/
-      GF_SERVER_SERVE_FROM_SUB_PATH: "true"
+      GF_SERVER_ROOT_URL: https://grafana.${DOMAIN}/
       GF_USERS_ALLOW_SIGN_UP: "false"
 
   caddy:
@@ -72,6 +71,8 @@ services:
       RABBITMQ_UI_PASSWORD_HASH: ${RABBITMQ_UI_PASSWORD_HASH}
       MAILPIT_UI_USER: ${MAILPIT_UI_USER}
       MAILPIT_UI_PASSWORD_HASH: ${MAILPIT_UI_PASSWORD_HASH}
+      GRAFANA_UI_USER: ${GRAFANA_UI_USER}
+      GRAFANA_UI_PASSWORD_HASH: ${GRAFANA_UI_PASSWORD_HASH}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
@@ -80,6 +81,7 @@ services:
       - order-service
       - rabbitmq
       - mailpit
+      - grafana
     networks:
       - edo_net
 
