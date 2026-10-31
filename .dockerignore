@@ -1,7 +1,7 @@
 # =============================================================================
 # .dockerignore — raíz del repo
 #
-# El build context de los tres servicios es la RAÍZ del repo (ver ADR-0015), de
+# El build context de los cuatro servicios es la RAÍZ del repo (ver ADR-0015), de
 # modo que todo lo listado acá es lo que el daemon DEJA de recibir en cada
 # `docker compose build`.
 #
@@ -17,6 +17,8 @@
 #   - services/<servicio>/app
 #   - services/{order,inventory}-service/alembic.ini
 #   - shared/  (completo)
+#   - services/assistant-service (salvo node_modules, el cliente generado de
+#     Prisma y dist/: su Dockerfile los vuelve a crear dentro de la imagen)
 #
 # Nota: el `.env` de la raíz que docker compose usa para interpolar variables
 # se lee del filesystem, no del build context. Excluirlo acá no lo afecta.
@@ -48,6 +50,13 @@
 **/.coverage.*
 **/coverage.xml
 **/htmlcov/
+
+# --- Node (assistant-service) -----------------------------------------------
+# node_modules pesa cientos de MB y trae binarios de Windows; la imagen corre
+# `npm ci` y `prisma generate` por su cuenta. dist/ ya cae en `**/dist/`.
+**/node_modules/
+**/coverage/
+services/assistant-service/src/generated/
 
 # --- Artefactos de build de Python -------------------------------------------
 **/*.egg-info/

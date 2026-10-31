@@ -4,12 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Portfolio project: an order system split into three Python 3.12 / FastAPI microservices that communicate **only through RabbitMQ events** (no service-to-service HTTP). The MVP is complete (phases F0–F9 merged); remaining work is hardening, listed in README "Mejoras futuras" and the open GitHub issues.
+Portfolio project: an order system split into three Python 3.12 / FastAPI microservices plus one TypeScript / NestJS service, all communicating **only through RabbitMQ events** (no service-to-service HTTP). The MVP is complete (phases F0–F9 merged); pending work lives in `docs/roadmap.md` (step 3, `assistant-service`, is in progress per `docs/plan-assistant-service.md`) and the open GitHub issues.
 
 - `order-service`: REST API (`POST /v1/orders`, `GET /v1/orders/{id}`) plus a consumer for stock results. Own Postgres.
 - `inventory-service`: worker that reserves stock on `order.created`. Own Postgres.
 - `notification-service`: worker that emails on `order.confirmed` / `order.rejected` over SMTP (Mailpit). No database.
-- `shared/`: uv workspace package imported by all three as `shared.*`.
+- `assistant-service`: NestJS 12 / TypeScript. Projects all five events into its own Postgres read model and serves `GET /v1/assistant/orders/{id}/timeline` (port 8004). The LLM assistant and Redis are phases C–D of the plan. Outside the uv workspace and never imports `shared/` (ADR-0021); see its section below.
+- `shared/`: uv workspace package imported by the three Python services as `shared.*`.
 
 README, ADRs, commits, PRs and issues are in Spanish; code, comments and docstrings are in English.
 
@@ -18,9 +19,9 @@ README, ADRs, commits, PRs and issues are in Spanish; code, comments and docstri
 - **ADR-0020: the single root `.venv/` (uv workspace) is owned by native Windows uv.** Run `uv` directly from PowerShell or Git Bash. Never run `uv` against this `.venv/` from WSL: a venv written by both sides breaks (ADR-0019, now superseded, has the history).
 - `.python-version` pins 3.12 to match CI and the Dockerfiles; don't drop it or uv picks the newest interpreter on the machine.
 - `make` (GNU Make 4.4, `winget install ezwinports.make`) runs from Git Bash. A shell opened before the install doesn't have it in `PATH`.
-- `.env` is generated, never copied by hand: `make env` (`scripts/generate_env.py`) fills every empty `*_PASS` / `*_PASSWORD` of `.env.example` with a random value, and compose refuses to start when one is missing (`${VAR:?}`). No password gets a value in `.env.example`, compose, CI or code: CI's Postgres uses trust auth and `build-images` runs the same script. Regenerating needs `docker compose down -v`, because Postgres, Grafana and RabbitMQ keep the password their volume was created with. Keep the compose guards as a bare `${VAR:?}`: with an error message after the `?`, GitGuardian's generic password detector reads the line as a literal (it flagged PR #48), and it scans every commit of a PR, so a later fix commit doesn't clear it.
+- `.env` is generated, never copied by hand: `make env` (`scripts/generate_env.py`) fills every empty `*_PASS` / `*_PASSWORD` of `.env.example` with a random value, and compose refuses to start when one is missing (`${VAR:?}`). No password gets a value in `.env.example`, compose, CI or code: CI's Postgres uses trust auth and `build-images` runs the same script. On an existing `.env`, `make env` keeps every value and only appends the template keys it lacks (fresh secrets for those), so a new service's database needs no `down -v`. Regenerating with `--force` needs `docker compose down -v`, because Postgres, Grafana and RabbitMQ keep the password their volume was created with. Keep the compose guards as a bare `${VAR:?}`: with an error message after the `?`, GitGuardian's generic password detector reads the line as a literal (it flagged PR #48), and it scans every commit of a PR, so a later fix commit doesn't clear it.
 - A global hook blocks any shell command whose text contains `.env` (except `.env.example`), even inside a heredoc or a Python string. Put such edits in a script file and run it, and never print a generated value.
-- Most test runs need Docker Desktop running: service DB tests start a `postgres:16-alpine` testcontainer (unless `CI` or `TEST_DB_URL` is set), and `shared/tests/integration/` starts a RabbitMQ testcontainer.
+- Most test runs need Docker Desktop running: service DB tests start a `postgres:16-alpine` testcontainer (unless `CI` or `TEST_DB_URL` is set), and `shared/tests/integration/` starts a RabbitMQ testcontainer. assistant-service's Vitest setup starts a Postgres testcontainer unless `TEST_DATABASE_URL` is set, and its consumer test starts a RabbitMQ one.
 - The `client` / `api_client` fixtures run the real lifespan with `app.main.connect_with_retry` replaced by a broker-down double, so service suites never open a socket to RabbitMQ, not even with `make up` running. Don't drop it: on Windows a refused TCP connect takes ~2 s, so the real backoff costs ~35 s per test. Tests of the lifespan's broker logic patch `RabbitMQConnection` / `connect_with_retry` themselves (`test_lifespan_*.py`). In order and inventory, `db_session_override` (used by `client` and `api_client`) points `get_db_session` at the test Postgres, `/health` included; a test that calls `/health` without those fixtures needs `@pytest.mark.usefixtures("db_session_override")`.
 
 ## Commands
@@ -35,6 +36,8 @@ make test                         # pytest + coverage gate per service, then sha
 make test-broker                  # the 3 retry/DLQ forcing tests against a real RabbitMQ (~4.5 min)
 make e2e                          # needs `make up` first; tests/e2e with marker e2e
 ```
+
+`make install`, `lint`, `test` and `format` also run the npm steps of assistant-service.
 
 Per service, run from the service directory (its pytest `pythonpath` makes `app` importable):
 
@@ -53,6 +56,17 @@ uv run --package shared pytest -m "integration and not slow" tests/integration/ 
 uv run --package shared pytest -m integration tests/integration/                 # all 3 forcing tests (~4.5 min of real TTLs)
 ```
 
+assistant-service, run from `services/assistant-service/` (Node 24, npm):
+
+```bash
+npm ci
+npm run test:cov                 # Vitest: unit, integration and Nest e2e; gate in vitest.config.ts (lines/statements 80)
+npx vitest run test/unit/core/messaging/retry-policy.spec.ts -t "<test name>"
+npm run lint && npm run typecheck && npm run format:check   # oxlint --type-aware, tsc --noEmit, prettier
+```
+
+`prisma generate` runs as a pre-script of lint, typecheck and test; the client goes to `src/generated/` (gitignored). After changing a contract in `shared/contracts`, regenerate the zod fixtures from the repo root with `uv run --package shared python scripts/export_contract_fixtures.py` (CI runs it with `--check`).
+
 CI runs shared's lint, mypy and unit tests, plus the fast forcing test (`tests-broker` job). The two `slow` forcing tests and the e2e suite are local-only (ADR-0017 for e2e): run `make test-broker` before a PR that touches retry/DLQ, and `make e2e` before one that touches the event flow.
 
 Coverage gates are `[tool.coverage.report] fail_under` in each service's `pyproject.toml` (order 85, inventory 80, notification 85). README numbers can lag behind.
@@ -63,9 +77,9 @@ Coverage gates are `[tool.coverage.report] fail_under` in each service's `pyproj
 
 One durable topic exchange, `orders`. The routing key is always the event's `event_type`:
 
-`POST /v1/orders` → `order.created` → inventory → `stock.reserved` | `stock.rejected` → order-service → `order.confirmed` | `order.rejected` → notification → email.
+`POST /v1/orders` → `order.created` → inventory → `stock.reserved` | `stock.rejected` → order-service → `order.confirmed` | `order.rejected` → notification → email. assistant-service consumes all five and publishes nothing.
 
-Each consumer declares only its own queues in `app/core/messaging/topology.py` (`declare_topology`, called from the lifespan). Queues are named `<service>.<purpose>` (`inventory-service.order-created`, `order-service.inventory-results`, `notification-service.order-outcomes`), and every main queue has:
+Each consumer declares only its own queues in `app/core/messaging/topology.py` (`declare_topology`, called from the lifespan). Queues are named `<service>.<purpose>` (`inventory-service.order-created`, `order-service.inventory-results`, `notification-service.order-outcomes`, `assistant-service.order-events`), and every main queue has:
 
 - `<queue>.dlq`: the main queue dead-letters to it through the default exchange (`x-dead-letter-exchange: ""`).
 - `<queue>.retry-5s|retry-30s|retry-2m`: TTL queues that dead-letter back to the main queue. Stages come from `shared.messaging.retry_policy.RETRY_STAGES`; a new consumer queue must declare all of them.
@@ -111,8 +125,20 @@ Domain entities raise `ValueError` on invariant violations (for example, confirm
 ### Persistence, build and deploy
 
 - Alembic lives in `app/core/data/source/local/alembic/`, and each container runs `alembic upgrade head` before uvicorn (ADR-0016), with `exec uvicorn` so uvicorn is PID 1 and gets SIGTERM (`sh` doesn't forward it, and the lifespan shutdown would never run). Run `alembic` from the service directory, because `alembic.ini` uses a relative path. Inventory's first migration seeds `SKU-001`…`SKU-005` (stock 100/50/25/10/5); the e2e tests and README examples depend on them.
-- The Docker build context is the repo root (ADR-0015). Each Dockerfile copies `pyproject.toml`, `uv.lock`, `shared/` and its own service directory, then runs `uv sync --frozen --no-dev --package <svc>`. A new runtime file must not be excluded by the root `.dockerignore`; CI's `build-images` job builds every image on amd64 and on a native arm64 runner (the prod VM is arm64), smoke-imports `shared.*` and `app.main` in each, and on arm64 also pulls every third-party image of the prod stack.
+- The Docker build context is the repo root (ADR-0015). Each Python Dockerfile copies `pyproject.toml`, `uv.lock`, `shared/` and its own service directory, then runs `uv sync --frozen --no-dev --package <svc>`. A new runtime file must not be excluded by the root `.dockerignore`; CI's `build-images` job builds every image on amd64 and on a native arm64 runner (the prod VM is arm64), smoke-imports `shared.*` and `app.main` in each (assistant-service: `dist/app.module.js` and `prisma --version`), and on arm64 also pulls every third-party image of the prod stack.
 - Production uses the `docker-compose.prod.yml` override plus Caddy (`deploy/Caddyfile`), with env in `.env.production` (template: `deploy/env.production.example`). The deploy guide (Oracle Cloud Always Free, ARM) is `docs/deploy.md`.
+
+### `assistant-service` (TypeScript, ADR-0021)
+
+Same layering and the same rules as the Python services, in `src/features/<feature>/{domain,application/{contracts,usecases,mappers},infrastructure,presentation/{http,consumers}}`; each feature's Nest module is its `di/`. Ports are abstract classes. `domain/` and `application/` never import Prisma, amqplib or Nest.
+
+- ESM (`"type": "module"`, `nodenext`): relative imports end in `.js`. Toolchain is what NestJS CLI 12 generates: Vitest, oxlint, Prettier, TypeScript 6.
+- **Contracts:** zod schemas in `src/core/messaging/contracts.ts` mirror `shared/contracts` by hand. Decimals arrive as strings (`"25.50"`) and are stored as `numeric`. The contract tests parse `test/fixtures/contracts/*.json`, exported from the Pydantic models; a contract change needs both the zod edit and regenerated fixtures.
+- **Messaging:** `RabbitMQConnection` uses amqplib 2's native recovery (no amqp-connection-manager). Consumers register with `addSetup` from `onModuleInit`, and every setup re-runs on each reconnection (topology, prefetch 10, consume). `/health` reports the broker healthy only after the setups ran. `wrapWithRetry` and `retry-policy.ts` mirror `shared.messaging` by hand: `ZodError`, `InvalidMessageError` and `DomainError` (the `ValueError` equivalent) go to the DLQ, anything else retries. A change to the Python retry protocol has to be ported here; nothing checks it automatically.
+- **Persistence:** Prisma 7 (config in `prisma7.config.ts`, generator `prisma-client`, `@prisma/adapter-pg`). The container runs `prisma migrate deploy` before `exec node dist/main.js`, and the test global setup applies the same migrations to a template database that each test file clones. Idempotency is the `order_event_log.event_id` PK (`createMany` with `skipDuplicates`) in the same transaction as the `order_view` change; `order_view.version` is an optimistic lock whose `ConcurrentUpdateError` is transient, so it retries.
+- **Out-of-order events** are the domain's job: `OrderView.apply` lets a late `order.created` fill in the details without touching the status, and throws `DomainError` on impossible transitions.
+- Integration tests start containers with random passwords. `@testcontainers/rabbitmq` is not used because it hardcodes guest/guest; the test uses `GenericContainer`.
+- Like the Python consumers, a duplicate isn't counted in `edo_events_processed_total`.
 
 ## Conventions
 

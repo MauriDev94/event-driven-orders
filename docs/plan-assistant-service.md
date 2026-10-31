@@ -1,6 +1,13 @@
 # Plan: `assistant-service`, asistente de pedidos con IA (NestJS)
 
-**Estado:** propuesto · **Fecha:** 2026-10-30 · Paso 3 del [roadmap](roadmap.md)
+**Estado:** fases A y B hechas (issue #58), C y D pendientes · **Fecha:** 2026-10-30 · Paso 3 del [roadmap](roadmap.md)
+
+> **Cambios respecto del plan original**, registrados en [ADR-0021](adr/0021-assistant-service-en-typescript.md):
+> - `amqplib` 2 trae recovery propio, así que no se usa `amqp-connection-manager`.
+> - La toolchain es la que genera el CLI de NestJS 12: ESM, Vitest y oxlint, en vez de Jest y ESLint.
+> - Prisma 7.10 (la 8 era una release candidate), con la configuración en `prisma7.config.ts`.
+> - `/health` informa `healthy` o `unhealthy`, igual que los servicios Python, no `down`.
+> - `order_view` suma una columna `version` para un lock optimista entre proyecciones concurrentes.
 
 Un cuarto microservicio, escrito en **TypeScript con NestJS**. Se suma al flujo **solo por eventos**, como los otros tres, y no les cambia nada.
 
@@ -40,8 +47,8 @@ POST /v1/assistant/ask ──▶ rate limit (Redis) ──▶ AskAssistant ─�
 ### Mensajería: mismo protocolo que los servicios Python
 
 **Conexión**
-- Usa `amqplib` con `amqp-connection-manager`. Ese par reconecta solo y vuelve a declarar la topología, como la `RobustConnection` de aio-pika ([ADR-0013](adr/0013-resiliencia-de-conexion-al-broker.md)).
-- Si RabbitMQ está caído, el proceso no se cae y `/health` responde 200 con `broker: down` ([ADR-0014](adr/0014-health-siempre-200.md)).
+- Usa `amqplib` 2 con su recovery nativo: reconecta solo y vuelve a declarar la topología, como la `RobustConnection` de aio-pika ([ADR-0013](adr/0013-resiliencia-de-conexion-al-broker.md)).
+- Si RabbitMQ está caído, el proceso no se cae y `/health` responde 200 con `broker: unhealthy` ([ADR-0014](adr/0014-health-siempre-200.md)).
 
 **Colas**
 - La cola principal es `assistant-service.order-events`, durable.
@@ -73,7 +80,7 @@ POST /v1/assistant/ask ──▶ rate limit (Redis) ──▶ AskAssistant ─�
 | Tabla | Columnas |
 |---|---|
 | `order_event_log` | `event_id` (PK), `order_id`, `event_type`, `occurred_at`, `correlation_id`, `payload` (jsonb), `received_at`; índice `(order_id, occurred_at)` |
-| `order_view` | `order_id` (PK), `customer_id`, `status` (`pending`, `confirmed` o `rejected`), `stock_result` (`reserved`, `rejected` o nulo), `rejection_reason`, `total_amount`, `items` (jsonb), `created_at`, `updated_at`, `last_event_at` |
+| `order_view` | `order_id` (PK), `customer_id`, `status` (`pending`, `confirmed` o `rejected`), `stock_result` (`reserved`, `rejected` o nulo), `rejection_reason`, `total_amount`, `items` (jsonb), `created_at`, `updated_at`, `last_event_at`, `version` (lock optimista) |
 
 - **Idempotencia** ([ADR-0006](adr/0006-idempotencia-con-processed-events.md)).
   - El insert en `order_event_log` es `ON CONFLICT DO NOTHING`, en la misma transacción que el upsert de `order_view`.
@@ -82,7 +89,7 @@ POST /v1/assistant/ask ──▶ rate limit (Redis) ──▶ AskAssistant ─�
   - Un estado terminal (`confirmed` o `rejected`) nunca vuelve a `pending`.
   - Un `order.created` atrasado completa cliente, ítems y total sin pisar el estado.
   - Una transición imposible, como `confirmed` → `rejected`, lanza `DomainError` y el mensaje va a la DLQ.
-- **Migraciones.** Se usa Prisma, y `prisma migrate deploy` corre al arrancar el contenedor, como Alembic en [ADR-0016](adr/0016-migraciones-alembic-al-arrancar.md). Antes de instalar, revisar con Context7 la guía de la versión vigente de Prisma.
+- **Migraciones.** Se usa Prisma 7, y `prisma migrate deploy` corre al arrancar el contenedor, como Alembic en [ADR-0016](adr/0016-migraciones-alembic-al-arrancar.md).
 
 ### El agente
 
@@ -176,7 +183,7 @@ services/assistant-service/
 ├── prisma/                             # schema.prisma y migraciones
 ├── test/                               # unit, integración (testcontainers) y e2e de Nest (supertest)
 ├── Dockerfile
-└── package.json, tsconfig.json, configuración de ESLint y Jest
+└── package.json, tsconfig.json, prisma7.config.ts, vitest.config.ts y .oxlintrc.json
 ```
 
 Los puertos son clases abstractas o tokens `Symbol`, y cada módulo de Nest los enlaza a su adaptador.
@@ -185,7 +192,7 @@ El servicio queda fuera del workspace de uv: tiene su propio `package.json` y `p
 
 ## Tests (TDD: primero el test que falla)
 
-- **Unitarios (Jest).**
+- **Unitarios (Vitest).**
   - Las transiciones de `OrderView`, incluidos los eventos fuera de orden y la transición imposible.
   - La tabla de decisión de reintentos, igual a la de `retry_policy`.
   - `AskAssistant` con `FakeLlmClient`: cita solo IDs vistos, detecta respuestas `ungrounded`, responde sin datos, respeta el tope de iteraciones y responde 503 cuando el proveedor se queda sin cuota.
@@ -198,13 +205,13 @@ El servicio queda fuera del workspace de uv: tiene su propio `package.json` y `p
   - En CI se usa el Postgres del job, como en `tests-db`.
 - **e2e de Nest** con supertest y `FakeLlmClient`.
 - **e2e del sistema** en `tests/e2e`, con pytest y solo local ([ADR-0017](adr/0017-tests-e2e-solo-local-no-en-ci.md)). Se crea un pedido y se espera hasta que `GET /v1/assistant/orders/{id}/timeline` muestre `order.created`, `stock.reserved` y `order.confirmed`.
-- **Gate de cobertura en Jest:** 80 %, como `inventory-service`.
+- **Gate de cobertura en Vitest:** 80 % de líneas y sentencias, como `inventory-service`.
 
 ## CI, Docker y Compose
 
 **CI**
-- Un job nuevo, `assistant-service`, con Node 24 y estos pasos: `npm ci`, ESLint, `tsc --noEmit` y Jest con cobertura contra un Postgres de servicio.
-- En `build-images` se agrega la imagen nueva. El smoke carga `dist/app.module.js` sin levantar el servidor.
+- Un job nuevo, `assistant-service`, con Node 24 y estos pasos: `npm ci`, oxlint, `tsc --noEmit`, Prettier, Vitest con cobertura contra un Postgres de servicio y `export_contract_fixtures.py --check`.
+- En `build-images` se agrega la imagen nueva. El smoke carga `dist/app.module.js` sin levantar el servidor y corre `prisma --version`, que falla si falta el binario de Prisma para la arquitectura.
 
 **Makefile**
 - `SERVICES` lista solo los servicios Python. Hay que sumar pasos con `npm` para que `make lint` y `make test` incluyan este servicio.
@@ -240,8 +247,8 @@ Antes de empezar:
 
 | Fase | Contenido | Listo cuando |
 |---|---|---|
-| **A. Esqueleto** | Proyecto Nest (CLI 12, TypeScript estricto, ESLint, Jest), config validada, `/health`, `/metrics`, logs, Dockerfile, Compose, job de CI, ADR-0021 | `docker compose up` levanta el servicio y `/health` responde 200 con `database` y `broker` |
-| **B. Proyección** | Conexión, topología y reintentos; contratos zod con sus fixtures; `OrderView`; `ProjectOrderEvent`; repositorio Prisma idempotente; endpoint de timeline; tests de integración; test e2e en pytest | Un pedido creado en `order-service` aparece con su historia en el timeline; un evento duplicado no cambia nada; un mensaje inválido termina en la DLQ |
+| **A. Esqueleto** (hecha) | Proyecto Nest (CLI 12, TypeScript estricto, oxlint, Vitest), config validada, `/health`, `/metrics`, logs, Dockerfile, Compose, job de CI, ADR-0021 | `docker compose up` levanta el servicio y `/health` responde 200 con `database` y `broker` |
+| **B. Proyección** (hecha) | Conexión, topología y reintentos; contratos zod con sus fixtures; `OrderView`; `ProjectOrderEvent`; repositorio Prisma idempotente; endpoint de timeline; tests de integración; test e2e en pytest | Un pedido creado en `order-service` aparece con su historia en el timeline; un evento duplicado no cambia nada; un mensaje inválido termina en la DLQ |
 | **C. Agente** | Puertos, herramientas, `AskAssistant` con sus límites (TDD con `FakeLlmClient`), adaptador de Gemini, `POST /v1/assistant/ask`, métricas, ADR-0022 | Con `LLM_PROVIDER=gemini`, "¿por qué se rechazó el pedido X?" responde el motivo citando el pedido, y una pregunta sin datos responde que no sabe |
 | **D. Redis y cierre** | Rate limit, caché con invalidación, ADR-0023, README (diagrama, puertos, comandos, ejemplos con curl, tabla de tests) y roadmap | Pasar el límite devuelve 429; un evento nuevo invalida la caché; el README muestra el servicio |
 
@@ -252,7 +259,7 @@ Si falta tiempo: A, B y C ya forman algo demostrable, y D puede ir después.
 - **Set de evaluación** (`npm run eval`): unas diez preguntas sobre datos sembrados, que revisan citas y hechos esperados. Se corre a mano, porque consume la cuota del plan gratis.
 - **Un proveedor de pago** (por ejemplo, Claude Haiku), solo si algún día hace falta. El puerto `LlmClient` ya lo permite.
 - **Respuestas en streaming** (SSE) y conversación de varios turnos.
-- **Forcing test contra RabbitMQ real**: un fallo transitorio pasa por `retry-5s` y vuelve a la cola principal; uno permanente va a la DLQ.
+- **Forcing test completo contra RabbitMQ real**: el test de integración del consumer ya verifica que un fallo permanente va a la DLQ y uno transitorio llega a `retry-5s` con `x-retry-count = 1`; falta esperar el TTL y ver que vuelve a la cola principal.
 - **Ruta en Caddy** y deploy junto con el paso 4 del roadmap. El endpoint del asistente se publica solo cuando el rate limit de la fase D esté andando, para no exponer la cuota gratis de Gemini.
 - **Pagos** (paso 6 del roadmap): proyectar `payment.*` y `stock.released`, y sumar el estado de pago a `OrderView`. Como las routing keys están enlazadas de forma explícita, los eventos nuevos no llegan solos.
 
@@ -265,3 +272,4 @@ Si falta tiempo: A, B y C ya forman algo demostrable, y D puede ir después.
 | Prompt injection por campos que vienen de afuera (`reason`, `customer_id`) | Herramientas solo de lectura, resultados tratados como datos y verificación de IDs citados |
 | El loop del agente es código propio | Vive en `AskAssistant` y se prueba con `FakeLlmClient`: tope de iteraciones, error de una herramienta, herramienta desconocida y respuesta sin citas |
 | NestJS 12, Prisma y `@google/genai` cambian seguido | Usar lo que genera el CLI y revisar la documentación vigente con Context7 antes de cada dependencia |
+| El protocolo de reintentos está duplicado en Python y TypeScript | Mismos nombres y la misma tabla de decisión en los tests de los dos lados; un cambio en `shared.messaging` se porta a mano ([ADR-0021](adr/0021-assistant-service-en-typescript.md)) |

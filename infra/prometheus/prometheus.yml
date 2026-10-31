@@ -18,6 +18,11 @@ scrape_configs:
       - targets: ["notification-service:8000"]
     metrics_path: /metrics
 
+  - job_name: assistant-service
+    static_configs:
+      - targets: ["assistant-service:8000"]
+    metrics_path: /metrics
+
   # /metrics stays aggregated (the plugin's default): one series per metric,
   # with no queue label.
   - job_name: rabbitmq
