@@ -6,13 +6,16 @@
 #
 # {$DOMAIN} debe resolver a la IP pública de la VM. Con sslip.io alcanza con
 # usar "<ip-con-guiones>.sslip.io" como DOMAIN (ej: 203-0-113-10.sslip.io);
-# los subdominios "rabbitmq.<DOMAIN>" / "mailpit.<DOMAIN>" resuelven a la
-# misma IP automáticamente.
+# los subdominios "mailpit.<DOMAIN>" / "grafana.<DOMAIN>" resuelven a la misma
+# IP automáticamente.
+#
+# La UI de RabbitMQ no pasa por acá: se entra por túnel SSH (ver
+# docker-compose.prod.yml).
 #
 # Generar los hashes de basic auth con:
 #   docker run --rm caddy:2-alpine caddy hash-password --plaintext '<password>'
-# y pegar el resultado (incluye el prefijo $2a$...) en RABBITMQ_UI_PASSWORD_HASH
-# / MAILPIT_UI_PASSWORD_HASH dentro de .env.production.
+# y pegar el resultado (incluye el prefijo $2a$...) en MAILPIT_UI_PASSWORD_HASH
+# / GRAFANA_UI_PASSWORD_HASH dentro de .env.production.
 # ----------------------------------------------------------------------------
 
 # --- order-service: API + Swagger, público --------------------------------
@@ -20,18 +23,23 @@
 	reverse_proxy order-service:8000
 }
 
-# --- RabbitMQ Management UI: protegido con basic auth ----------------------
-rabbitmq.{$DOMAIN} {
-	basicauth {
-		{$RABBITMQ_UI_USER} {$RABBITMQ_UI_PASSWORD_HASH}
-	}
-	reverse_proxy rabbitmq:15672
-}
-
 # --- Mailpit UI: protegido con basic auth -----------------------------------
 mailpit.{$DOMAIN} {
-	basicauth {
+	basic_auth {
 		{$MAILPIT_UI_USER} {$MAILPIT_UI_PASSWORD_HASH}
 	}
 	reverse_proxy mailpit:8025
+}
+
+# --- Grafana: protegido con basic auth, y después el login de Grafana -------
+grafana.{$DOMAIN} {
+	basic_auth {
+		{$GRAFANA_UI_USER} {$GRAFANA_UI_PASSWORD_HASH}
+	}
+	# Grafana lee un header Basic como su propio login (auth.basic): cada request
+	# con las credenciales de Caddy cuenta como un intento fallido del usuario
+	# admin, y a los pocos Grafana lo bloquea. Grafana no recibe este header.
+	reverse_proxy grafana:3000 {
+		header_up -Authorization
+	}
 }
