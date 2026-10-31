@@ -129,13 +129,13 @@
       "targets": [
         {
           "datasource": { "type": "prometheus" },
-          "expr": "rabbitmq_queue_messages_ready",
+          "expr": "rabbitmq_detailed_queue_messages_ready",
           "legendFormat": "Ready — {{queue}}",
           "refId": "A"
         },
         {
           "datasource": { "type": "prometheus" },
-          "expr": "rabbitmq_queue_messages_unacknowledged",
+          "expr": "rabbitmq_detailed_queue_messages_unacked",
           "legendFormat": "Unacked — {{queue}}",
           "refId": "B"
         }

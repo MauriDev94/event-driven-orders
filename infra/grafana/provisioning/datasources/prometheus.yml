@@ -2,6 +2,9 @@ apiVersion: 1
 
 datasources:
   - name: Prometheus
+    # The dashboard panels reference this uid. Without it Grafana generates a
+    # random one, and only the UI's lookup by name keeps the panels working.
+    uid: Prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090

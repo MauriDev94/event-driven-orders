@@ -18,7 +18,20 @@ scrape_configs:
       - targets: ["notification-service:8000"]
     metrics_path: /metrics
 
+  # /metrics stays aggregated (the plugin's default): one series per metric,
+  # with no queue label.
   - job_name: rabbitmq
     static_configs:
       - targets: ["rabbitmq:15692"]
     metrics_path: /metrics
+
+  # Per-queue depth for the "RabbitMQ Queue Depth" panel. /metrics/detailed
+  # returns only the families asked for, with a queue label and the
+  # rabbitmq_detailed_ prefix; queue_coarse_metrics is the cheapest queue
+  # family (ready, unacked and total messages).
+  - job_name: rabbitmq-queues
+    static_configs:
+      - targets: ["rabbitmq:15692"]
+    metrics_path: /metrics/detailed
+    params:
+      family: ["queue_coarse_metrics"]
