@@ -70,9 +70,6 @@
 # .claude/worktrees/ guarda copias completas del repo dentro del context.
 .claude/
 
-# --- Docs de uso local -------------------------------------------------------
-DEPLOY.md
-
 # --- IDE / OS ----------------------------------------------------------------
 .vscode/
 .idea/

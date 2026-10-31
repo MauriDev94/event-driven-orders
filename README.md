@@ -306,7 +306,8 @@ Dos decisiones sobre el **alcance** de esta suite están registradas como ADR:
 ## Despliegue
 
 Stack listo para correr en una VM Linux con Docker Compose + Caddy (HTTPS
-automático):
+automático). La guía paso a paso, para una VM gratis de Oracle Cloud (ARM), está
+en [`docs/deploy.md`](docs/deploy.md).
 
 - `docker-compose.prod.yml`: override de producción (sin exponer Postgres/AMQP
   al host, `restart: always`, agrega `caddy`).
