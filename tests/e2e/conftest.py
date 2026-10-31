@@ -1,8 +1,8 @@
 """Fixtures for the end-to-end suite.
 
 These tests run against the REAL stack started by `make up` (RabbitMQ + 2x
-Postgres + Mailhog + the 3 services) — no mocks, no dependency overrides. The
-only "test doubles" are Mailhog (a real SMTP server with an inspection API)
+Postgres + Mailpit + the 3 services) — no mocks, no dependency overrides. The
+only "test doubles" are Mailpit (a real SMTP server with an inspection API)
 and the public HTTP APIs each service already exposes.
 
 Base URLs are overridable via env vars (``E2E_*_URL``) so the suite can also
@@ -22,7 +22,7 @@ import pytest
 ORDER_SERVICE_URL = os.getenv("E2E_ORDER_SERVICE_URL", "http://localhost:8001")
 INVENTORY_SERVICE_URL = os.getenv("E2E_INVENTORY_SERVICE_URL", "http://localhost:8002")
 NOTIFICATION_SERVICE_URL = os.getenv("E2E_NOTIFICATION_SERVICE_URL", "http://localhost:8003")
-MAILHOG_URL = os.getenv("E2E_MAILHOG_URL", "http://localhost:8025")
+MAILPIT_URL = os.getenv("E2E_MAILPIT_URL", "http://localhost:8025")
 
 DEFAULT_TIMEOUT = float(os.getenv("E2E_TIMEOUT", "30"))
 POLL_INTERVAL = 1.0
@@ -41,12 +41,12 @@ def order_client() -> Any:
 
 
 @pytest.fixture(scope="session")
-def mailhog_client() -> Any:
-    with httpx.Client(base_url=MAILHOG_URL, timeout=10.0) as client:
+def mailpit_client() -> Any:
+    with httpx.Client(base_url=MAILPIT_URL, timeout=10.0) as client:
         yield client
 
 
-def _not_ready(client: httpx.Client, mailhog_client: httpx.Client) -> dict[str, str]:
+def _not_ready(client: httpx.Client, mailpit_client: httpx.Client) -> dict[str, str]:
     """Return what is still missing, keyed by component (empty when ready)."""
     missing: dict[str, str] = {}
     for name, url in SERVICE_URLS.items():
@@ -60,16 +60,16 @@ def _not_ready(client: httpx.Client, mailhog_client: httpx.Client) -> dict[str, 
         if degraded:
             missing[name] = f"{' and '.join(degraded)} unhealthy"
     try:
-        mailhog_client.get("/api/v2/messages").raise_for_status()
+        mailpit_client.get("/readyz").raise_for_status()
     except httpx.HTTPError as exc:
-        missing["mailhog"] = repr(exc)
+        missing["mailpit"] = repr(exc)
     return missing
 
 
 @pytest.fixture(scope="session", autouse=True)
-def _wait_for_stack(mailhog_client: httpx.Client) -> None:
+def _wait_for_stack(mailpit_client: httpx.Client) -> None:
     """Block until the 3 services report database and broker healthy, and
-    Mailhog responds.
+    Mailpit is ready.
 
     A 200 from ``/health`` is not enough: it answers 200 with the broker down
     (ADR-0014). Right after ``make up`` a consumer may still be connecting,
@@ -83,7 +83,7 @@ def _wait_for_stack(mailhog_client: httpx.Client) -> None:
     missing: dict[str, str] = {}
     with httpx.Client(timeout=5.0) as client:
         while time.monotonic() < deadline:
-            missing = _not_ready(client, mailhog_client)
+            missing = _not_ready(client, mailpit_client)
             if not missing:
                 return
             time.sleep(POLL_INTERVAL)
@@ -116,5 +116,5 @@ def wait_until() -> Callable[..., None]:
 
 @pytest.fixture
 def unique_customer_id() -> str:
-    """A fresh customer id per test, so Mailhog inboxes never collide."""
+    """A fresh customer id per test, so Mailpit inboxes never collide."""
     return f"e2e-{uuid.uuid4().hex[:12]}"
