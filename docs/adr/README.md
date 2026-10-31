@@ -45,6 +45,12 @@ Un ADR no se reescribe cuando la realidad cambia: se marca como `Superseded by A
 | [0009](0009-notification-service-sin-base-de-datos.md) | `notification-service` sin base de datos: deduplicación en memoria | Aceptada (MVP) |
 | [0010](0010-email-derivado-del-customer-id.md) | Email del destinatario derivado del `customer_id` | Aceptada (MVP) |
 
+### `assistant-service`
+
+| ADR | Decisión | Estado |
+|---|---|---|
+| [0021](0021-assistant-service-en-typescript.md) | `assistant-service` en TypeScript/NestJS: contratos zod verificados contra fixtures de Pydantic, `amqplib` con recovery nativo, Prisma 7 | Aceptada |
+
 ### Testing y build
 
 | ADR | Decisión | Estado |
