@@ -148,12 +148,12 @@ Las migraciones de Alembic corren solas al arrancar cada servicio ([ADR-0016](ad
 
 - **Logs:** `edo logs -f order-service` (o cualquier servicio). Son JSON con `correlation_id`, así que un pedido se sigue entre servicios con `edo logs | grep <correlation_id>`.
 - **Reinicios:** todos los servicios tienen `restart: always`, y el paquete de Docker deja el daemon habilitado al arrancar la VM, así que el stack vuelve solo después de un reinicio.
-- **Cambiar una contraseña de Postgres o de Grafana:** las dos guardan la contraseña con la que se creó su volumen. Cambiarla en `.env.production` no alcanza; regenerar todo exige `edo down -v`, que borra los pedidos, el stock y la configuración de Grafana. Las de basic auth sí se cambian con `set_hash` y `edo up -d caddy`.
+- **Cambiar una contraseña de Postgres, de Grafana o de RabbitMQ:** los tres guardan la contraseña con la que se creó su volumen. Cambiarla en `.env.production` no alcanza; regenerar todo exige `edo down -v`, que borra los pedidos, el stock, los mensajes pendientes y la configuración de Grafana. Las de basic auth sí se cambian con `set_hash` y `edo up -d caddy`.
+- **Cambiar los argumentos de una cola:** las colas viven en el volumen de RabbitMQ, que no acepta redeclarar una cola existente con otros argumentos. Si un deploy cambia una en `app/core/messaging/topology.py`, el servicio arranca sin consumir y lo registra en su log. Hay que borrar la cola, con lo que se pierden sus mensajes pendientes, y reiniciar el servicio para que la cree de nuevo: `edo exec rabbitmq rabbitmqctl delete_queue <cola>` y `edo restart <servicio>`.
 - **Memoria:** `docker stats --no-stream` muestra el uso por contenedor. Revisa en la consola de Oracle que la memoria de la VM quede sobre el 20 % (paso 1).
 
 ## Limitaciones conocidas
 
-- **RabbitMQ no tiene volumen de datos todavía** ([roadmap, paso 2](roadmap.md)). Después de un reinicio arranca sin colas, y un `order.created` publicado antes de que `inventory-service` vuelva a declarar la suya se pierde: el pedido queda `pending`.
 - **Los emails no se entregan.** Mailpit los captura para mostrarlos; no hay un servidor SMTP real.
 - **La deduplicación de `notification-service` vive en memoria** ([ADR-0009](adr/0009-notification-service-sin-base-de-datos.md)): un reinicio la pierde, y un evento reentregado justo después podría mandar el email dos veces.
 
@@ -166,5 +166,5 @@ Las migraciones de Alembic corren solas al arrancar cada servicio ([ADR-0016](ad
 | Caddy se reinicia en loop con `username and password cannot be empty or missing` | Falta un `*_UI_PASSWORD_HASH` en `.env.production` (paso 4) |
 | `edo` avisa `The "…" variable is not set. Defaulting to a blank string.` con un nombre raro | Un hash se pegó sin duplicar los `$`: Compose lo corrompe y el basic auth rechaza siempre la contraseña. Vuelve a correr `set_hash` |
 | Caddy no logra el certificado | El dominio no resuelve a la IP de la VM, el puerto 80 está cerrado o se alcanzó el límite de Let's Encrypt (paso 4): `edo logs caddy` dice cuál |
-| Un servicio no se conecta a su Postgres después de regenerar `.env.production` | El volumen tiene la contraseña anterior (ver Operación) |
-| Un pedido se queda en `pending` después de reiniciar la VM | Se publicó antes de que existiera la cola de `inventory-service` (Limitaciones conocidas) |
+| Un servicio no se conecta a su Postgres o a RabbitMQ después de regenerar `.env.production` | El volumen tiene la contraseña anterior (ver Operación) |
+| Un servicio no consume después de un deploy y su log dice `PRECONDITION_FAILED - inequivalent arg` | El deploy cambió los argumentos de una cola que ya existe (ver Operación) |
