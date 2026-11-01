@@ -223,7 +223,7 @@ services:
       # out of the box. For the real model set LLM_PROVIDER=gemini and
       # GEMINI_API_KEY in the root env file (ADR-0022).
       LLM_PROVIDER: ${LLM_PROVIDER:-fake}
-      LLM_MODEL: ${LLM_MODEL:-gemini-3.8-flash}
+      LLM_MODEL: ${LLM_MODEL:-gemini-3.5-flash-lite}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
     ports:
       - "8004:8000"
