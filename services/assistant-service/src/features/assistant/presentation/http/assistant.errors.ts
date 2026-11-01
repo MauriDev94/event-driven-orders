@@ -3,6 +3,7 @@ import {
   LlmQuotaExceededError,
   LlmUnavailableError,
 } from '../../application/contracts/llm-client.js';
+import { ModelCallBudgetUnavailableError } from '../../application/contracts/model-call-budget.js';
 
 export const UNAVAILABLE_MESSAGE =
   'the assistant is unavailable, try again later';
@@ -14,7 +15,10 @@ export function toHttpError(error: unknown): unknown {
       message: 'the assistant ran out of model quota, try again later',
     });
   }
-  if (error instanceof LlmUnavailableError) {
+  if (
+    error instanceof LlmUnavailableError ||
+    error instanceof ModelCallBudgetUnavailableError
+  ) {
     return new ServiceUnavailableException({ message: UNAVAILABLE_MESSAGE });
   }
   return error;
