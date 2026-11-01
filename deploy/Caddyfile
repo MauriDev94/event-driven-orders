@@ -18,9 +18,18 @@
 # / GRAFANA_UI_PASSWORD_HASH dentro de .env.production.
 # ----------------------------------------------------------------------------
 
-# --- order-service: API + Swagger, público --------------------------------
+# --- API pública: order-service (con Swagger) y assistant-service ----------
+# El asistente comparte el dominio, así que un frontend no necesita CORS. Solo
+# se publica /v1/assistant/*: su /health y su /metrics no salen a internet.
+# Caddy reemplaza el X-Forwarded-For que mande el cliente por su IP real, y el
+# asistente lo lee con TRUST_PROXY=uniquelocal para el rate limit (ADR-0023).
 {$DOMAIN} {
-	reverse_proxy order-service:8000
+	handle /v1/assistant/* {
+		reverse_proxy assistant-service:8000
+	}
+	handle {
+		reverse_proxy order-service:8000
+	}
 }
 
 # --- Mailpit UI: protegido con basic auth -----------------------------------

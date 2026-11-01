@@ -16,6 +16,7 @@ describe('loadEnv', () => {
       LLM_PROVIDER: 'fake',
       LLM_MODEL: 'gemini-3.5-flash-lite',
       ASK_RATE_LIMIT_PER_MINUTE: 5,
+      LLM_DAILY_CALL_LIMIT: 400,
       TRUST_PROXY: false,
     });
   });
@@ -59,6 +60,7 @@ describe('loadEnv', () => {
         LLM_MODEL: 'gemini-3.8-flash',
         GEMINI_API_KEY: key,
         ASK_RATE_LIMIT_PER_MINUTE: '12',
+        LLM_DAILY_CALL_LIMIT: '100',
         TRUST_PROXY: 'loopback, uniquelocal',
       }),
     ).toMatchObject({
@@ -66,6 +68,7 @@ describe('loadEnv', () => {
       LLM_MODEL: 'gemini-3.8-flash',
       GEMINI_API_KEY: key,
       ASK_RATE_LIMIT_PER_MINUTE: 12,
+      LLM_DAILY_CALL_LIMIT: 100,
       TRUST_PROXY: 'loopback, uniquelocal',
     });
   });

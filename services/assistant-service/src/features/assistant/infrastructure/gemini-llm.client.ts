@@ -1,6 +1,9 @@
+import { setTimeout as wait } from 'node:timers/promises';
 import {
   ApiError,
   type Content,
+  type GenerateContentParameters,
+  type GenerateContentResponse,
   type Models,
   type Part,
   ThinkingLevel,
@@ -18,9 +21,14 @@ import {
 export interface GeminiOptions {
   /** Caps the answer, thinking included, so a turn can't drain the quota. */
   maxOutputTokens?: number;
+  /** Wait before the one retry of a momentary API failure. */
+  retryDelayMs?: number;
 }
 
 const QUOTA_EXCEEDED = 429;
+// INTERNAL and UNAVAILABLE: Gemini's momentary failures, which the same
+// request usually gets past seconds later. A 429 is the quota and is not one.
+const MOMENTARY_FAILURES = new Set([500, 503]);
 
 /**
  * The real model: Gemini through `@google/genai`, one stateless
@@ -29,9 +37,13 @@ const QUOTA_EXCEEDED = 429;
  * Gemini 3 models attach thought signatures to their turns and expect them
  * back unchanged, so each model turn keeps the content it came with
  * (`providerData`) and is replayed as is; only a turn without it is rebuilt.
+ *
+ * A 500 or 503 is retried once after `retryDelayMs`, inside the question's
+ * time budget: the wait ends as soon as the question runs out of time.
  */
 export class GeminiLlmClient extends LlmClient {
   private readonly maxOutputTokens: number;
+  private readonly retryDelayMs: number;
 
   constructor(
     private readonly models: Pick<Models, 'generateContent'>,
@@ -40,31 +52,35 @@ export class GeminiLlmClient extends LlmClient {
   ) {
     super();
     this.maxOutputTokens = options.maxOutputTokens ?? 2_048;
+    this.retryDelayMs = options.retryDelayMs ?? 1_000;
   }
 
   async complete(request: LlmRequest): Promise<LlmTurn> {
     let response;
     try {
-      response = await this.models.generateContent({
-        model: this.model,
-        contents: request.messages.map(toContent),
-        config: {
-          systemInstruction: request.system,
-          tools: [
-            {
-              functionDeclarations: request.tools.map((tool) => ({
-                name: tool.name,
-                description: tool.description,
-                parametersJsonSchema: tool.parameters,
-              })),
-            },
-          ],
-          maxOutputTokens: this.maxOutputTokens,
-          // Answers come from the tools; low thinking saves quota and time.
-          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-          abortSignal: request.signal,
+      response = await this.generate(
+        {
+          model: this.model,
+          contents: request.messages.map(toContent),
+          config: {
+            systemInstruction: request.system,
+            tools: [
+              {
+                functionDeclarations: request.tools.map((tool) => ({
+                  name: tool.name,
+                  description: tool.description,
+                  parametersJsonSchema: tool.parameters,
+                })),
+              },
+            ],
+            maxOutputTokens: this.maxOutputTokens,
+            // Answers come from the tools; low thinking saves quota and time.
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+            abortSignal: request.signal,
+          },
         },
-      });
+        request.signal,
+      );
     } catch (error) {
       throw translate(error, request.signal);
     }
@@ -100,6 +116,24 @@ export class GeminiLlmClient extends LlmClient {
       },
     };
   }
+
+  private async generate(
+    params: GenerateContentParameters,
+    signal: AbortSignal,
+  ): Promise<GenerateContentResponse> {
+    try {
+      return await this.models.generateContent(params);
+    } catch (error) {
+      if (!isMomentaryFailure(error) || signal.aborted) throw error;
+      // Rejects with an AbortError when the question runs out of time.
+      await wait(this.retryDelayMs, undefined, { signal });
+      return await this.models.generateContent(params);
+    }
+  }
+}
+
+function isMomentaryFailure(error: unknown): boolean {
+  return error instanceof ApiError && MOMENTARY_FAILURES.has(error.status);
 }
 
 function toContent(message: ConversationMessage): Content {

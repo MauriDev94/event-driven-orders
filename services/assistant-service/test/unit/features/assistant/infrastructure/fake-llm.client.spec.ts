@@ -6,6 +6,7 @@ import {
   orderSummary,
   StubOrderQueries,
 } from '../../../../support/stub-order-queries.js';
+import { StubModelCallBudget } from '../../../../support/stub-model-call-budget.js';
 
 describe('FakeLlmClient', () => {
   let queries: StubOrderQueries;
@@ -13,7 +14,11 @@ describe('FakeLlmClient', () => {
 
   beforeEach(() => {
     queries = new StubOrderQueries();
-    assistant = new AskAssistant(new FakeLlmClient(), buildOrderTools(queries));
+    assistant = new AskAssistant(
+      new FakeLlmClient(),
+      buildOrderTools(queries),
+      new StubModelCallBudget(),
+    );
   });
 
   it('looks up the order the question names and explains its state', async () => {

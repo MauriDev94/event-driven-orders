@@ -9,24 +9,25 @@ Esta guía no tiene IPs ni contraseñas reales. Donde dice `<ip>`, `<vm>` o `<DO
 | URL | Qué es | Acceso |
 |---|---|---|
 | `https://<DOMAIN>` | API de `order-service` y Swagger (`/docs`) | Público |
+| `https://<DOMAIN>/v1/assistant/...` | `assistant-service`: el timeline de cada pedido y las preguntas al asistente (`POST /v1/assistant/ask`) | Público, con un rate limit de 5 preguntas por minuto por IP y un tope diario de llamadas al modelo |
 | `https://mailpit.<DOMAIN>` | Mailpit: los emails que envía `notification-service` (no se entregan a nadie) | Basic auth de Caddy |
 | `https://grafana.<DOMAIN>` | Grafana con el dashboard del proyecto | Basic auth de Caddy, y después el login de Grafana |
 | UI de RabbitMQ | Colas, DLQ y mensajes | Solo por túnel SSH (paso 6) |
 
-Nada más escucha desde internet: Postgres, AMQP, Prometheus y los servicios quedan en la red interna de Docker. Caddy es el único contenedor con puertos públicos (80 y 443) y saca los certificados HTTPS de Let's Encrypt solo.
+Nada más escucha desde internet: Postgres, AMQP, Redis, Prometheus y los servicios quedan en la red interna de Docker; del asistente solo sale `/v1/assistant/*`, no su `/health` ni su `/metrics`. Caddy es el único contenedor con puertos públicos (80 y 443) y saca los certificados HTTPS de Let's Encrypt solo.
 
 ## 1. Crear la VM
 
 En la consola de Oracle, **Compute → Instances → Create instance**:
 
 - **Imagen:** Canonical Ubuntu LTS (24.04 o 26.04), versión aarch64.
-- **Shape:** `VM.Standard.A1.Flex` (Ampere, ARM), con 1 OCPU y 4 GB de memoria. Alcanza para el stack actual, que en reposo usa ~0,8 GB (medido en el [paso 0 del roadmap](roadmap.md)).
+- **Shape:** `VM.Standard.A1.Flex` (Ampere, ARM), con 1 OCPU y 4 GB de memoria. Alcanza para el stack actual: recién levantado usa ~1,2 GB entre sus 13 contenedores (medido con el stack de producción en local el 2026-11-01).
 - **Red:** una VCN con subred pública, con IPv4 pública asignada.
 - **SSH:** sube tu clave pública. El usuario de las imágenes Ubuntu es `ubuntu`.
 
 Antes de elegir el tamaño, ten en cuenta:
 
-- **Oracle reclama las VMs gratis que parecen ociosas.** Lo hace si en 7 días quedan los tres bajo el 20 %: el CPU (percentil 95), la red y la memoria. Con 4 GB, la memoria del stack en reposo queda sobre ese umbral; con 12 GB, no. Confírmalo con la métrica de memoria de la VM durante la primera semana.
+- **Oracle reclama las VMs gratis que parecen ociosas.** Lo hace si en 7 días quedan los tres bajo el 20 %: el CPU (percentil 95), la red y la memoria. Con 4 GB, la memoria del stack queda cerca del 30 %, sobre ese umbral; con 12 GB, no. Confírmalo con la métrica de memoria de la VM durante la primera semana.
 - **El plan gratis de Ampere A1** es de 2 OCPU y 12 GB en total por cuenta (hasta 2026 eran 4 y 24). Si la suma de tus VMs A1 lo supera, Oracle deshabilita todas, no solo la que sobra.
 - **"Out of host capacity"** es común al crear una VM A1. Reintenta más tarde, prueba otro availability domain o pide menos OCPU y memoria. La región principal se elige al registrarse y no se puede cambiar.
 
@@ -75,9 +76,9 @@ cd event-driven-orders
 python3 scripts/generate_env.py --template deploy/env.production.example --output .env.production
 ```
 
-El script llena cada contraseña vacía (RabbitMQ, las dos bases, Grafana) con un valor aleatorio y nunca sobrescribe un `.env.production` que ya exista. `.env.production` no se versiona.
+El script llena cada contraseña vacía (RabbitMQ, las tres bases, Redis y Grafana) con un valor aleatorio y nunca sobrescribe un `.env.production` que ya exista. `.env.production` no se versiona.
 
-Quedan dos cosas por completar a mano.
+Quedan tres cosas por completar a mano.
 
 **El dominio.** Edita `DOMAIN` en `.env.production`. Hay dos opciones gratis, y las dos resuelven también `mailpit.<DOMAIN>` y `grafana.<DOMAIN>`:
 
@@ -102,6 +103,10 @@ set_hash GRAFANA_UI_PASSWORD_HASH
 
 El usuario de las dos es `admin` (`MAILPIT_UI_USER` y `GRAFANA_UI_USER`).
 
+**La clave de Gemini**, para que el asistente use el modelo real. Sin ella responde con `fake`, un modelo de reglas fijas. Crea una clave gratis en [Google AI Studio](https://aistudio.google.com/apikey) y, en la VM, edita `.env.production` con `nano .env.production` (así la clave no queda en el historial de la shell): pon `LLM_PROVIDER=gemini` y pega la clave después de `GEMINI_API_KEY=`.
+
+En el plan gratis, Google puede usar lo que recibe para mejorar sus productos: el asistente solo debe ver pedidos de prueba. La cuota es de 500 solicitudes por día con `gemini-3.5-flash-lite`, y el servicio corta antes, en 400 llamadas por día ([ADR-0024](adr/0024-tope-diario-de-llamadas-al-modelo.md)).
+
 ## 5. Levantar el stack
 
 Un alias para no repetir los tres archivos en cada comando:
@@ -110,7 +115,7 @@ Un alias para no repetir los tres archivos en cada comando:
 echo "alias edo='docker compose -f docker-compose.yml -f docker-compose.prod.yml --env-file .env.production'" >> ~/.bashrc
 source ~/.bashrc
 
-edo up -d --build   # la primera vez construye las 3 imágenes en la VM y tarda varios minutos
+edo up -d --build   # la primera vez construye las 4 imágenes en la VM y tarda varios minutos
 edo ps              # todos "Up"; los que tienen healthcheck, "(healthy)"
 ```
 
@@ -118,6 +123,8 @@ Comprueba desde tu máquina:
 
 ```bash
 curl https://<DOMAIN>/health   # {"status":"ok",...,"database":"healthy","broker":"healthy"}
+curl -X POST https://<DOMAIN>/v1/assistant/ask -H "Content-Type: application/json" \
+  -d '{"question": "¿Cuáles son los últimos pedidos?"}'   # "model": "gemini-3.5-flash-lite"
 ```
 
 Si el certificado todavía no está, Caddy lo está pidiendo: `edo logs caddy` muestra `certificate obtained successfully` por cada dominio cuando termina.
@@ -150,11 +157,13 @@ Las migraciones de Alembic corren solas al arrancar cada servicio ([ADR-0016](ad
 - **Reinicios:** todos los servicios tienen `restart: always`, y el paquete de Docker deja el daemon habilitado al arrancar la VM, así que el stack vuelve solo después de un reinicio.
 - **Cambiar una contraseña de Postgres, de Grafana o de RabbitMQ:** los tres guardan la contraseña con la que se creó su volumen. Cambiarla en `.env.production` no alcanza; regenerar todo exige `edo down -v`, que borra los pedidos, el stock, los mensajes pendientes y la configuración de Grafana. Las de basic auth sí se cambian con `set_hash` y `edo up -d caddy`.
 - **Cambiar los argumentos de una cola:** las colas viven en el volumen de RabbitMQ, que no acepta redeclarar una cola existente con otros argumentos. Si un deploy cambia una en `app/core/messaging/topology.py`, el servicio arranca sin consumir y lo registra en su log. Hay que borrar la cola, con lo que se pierden sus mensajes pendientes, y reiniciar el servicio para que la cree de nuevo: `edo exec rabbitmq rabbitmqctl delete_queue <cola>` y `edo restart <servicio>`.
+- **Cuota del asistente:** las llamadas al modelo del día se cuentan en Redis, con la fecha de la hora del Pacífico, que es cuando Gemini reinicia su cuota: `edo exec redis redis-cli get model-calls:$(TZ=America/Los_Angeles date +%F)`. Pasadas 400 (`LLM_DAILY_CALL_LIMIT`), el asistente responde 503 hasta la medianoche del Pacífico, entre las 3:00 y las 5:00 en Chile según el horario de verano de cada país.
 - **Memoria:** `docker stats --no-stream` muestra el uso por contenedor. Revisa en la consola de Oracle que la memoria de la VM quede sobre el 20 % (paso 1).
 
 ## Limitaciones conocidas
 
 - **Los emails no se entregan.** Mailpit los captura para mostrarlos; no hay un servidor SMTP real.
+- **El asistente usa el plan gratis de Gemini.** Google puede usar las preguntas y los pedidos que recibe, y puede cambiar los límites del plan sin aviso.
 - **La deduplicación de `notification-service` vive en memoria** ([ADR-0009](adr/0009-notification-service-sin-base-de-datos.md)): un reinicio la pierde, y un evento reentregado justo después podría mandar el email dos veces.
 
 ## Problemas comunes
@@ -168,3 +177,6 @@ Las migraciones de Alembic corren solas al arrancar cada servicio ([ADR-0016](ad
 | Caddy no logra el certificado | El dominio no resuelve a la IP de la VM, el puerto 80 está cerrado o se alcanzó el límite de Let's Encrypt (paso 4): `edo logs caddy` dice cuál |
 | Un servicio no se conecta a su Postgres o a RabbitMQ después de regenerar `.env.production` | El volumen tiene la contraseña anterior (ver Operación) |
 | Un servicio no consume después de un deploy y su log dice `PRECONDITION_FAILED - inequivalent arg` | El deploy cambió los argumentos de una cola que ya existe (ver Operación) |
+| `assistant-service` se reinicia en loop y su log nombra `GEMINI_API_KEY` | `LLM_PROVIDER=gemini` sin clave en `.env.production` (paso 4) |
+| El asistente responde `the assistant ran out of model quota` | Se agotó el tope diario o la cuota de Gemini; vuelve después de la medianoche del Pacífico (ver Operación) |
+| `"model": "fake"` en las respuestas del asistente | Falta `LLM_PROVIDER=gemini` en `.env.production`, o no se recreó el servicio: `edo up -d assistant-service` |

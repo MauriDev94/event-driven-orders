@@ -7,11 +7,13 @@ import {
 import {
   type ConversationMessage,
   type LlmClient,
+  LlmQuotaExceededError,
   LlmUnavailableError,
   type TokenUsage,
   type ToolCall,
   type ToolResult,
 } from '../contracts/llm-client.js';
+import type { ModelCallBudget } from '../contracts/model-call-budget.js';
 import type { AssistantTool } from '../tools/order-tools.js';
 
 export interface AskAssistantOptions {
@@ -51,6 +53,7 @@ function systemPrompt(now: Date): string {
  * back, until it answers or a limit is hit. It lives here and not in the
  * adapter, so it doesn't depend on a provider and the fake tests all of it.
  * The tools are read-only, and the answer is grounded before it leaves.
+ * Each model call is taken from the daily budget first (ADR-0024).
  */
 export class AskAssistant {
   private readonly tools: Map<string, AssistantTool>;
@@ -62,6 +65,7 @@ export class AskAssistant {
   constructor(
     private readonly llm: LlmClient,
     tools: AssistantTool[],
+    private readonly budget: ModelCallBudget,
     options: AskAssistantOptions = {},
   ) {
     this.tools = new Map(tools.map((tool) => [tool.spec.name, tool]));
@@ -91,6 +95,11 @@ export class AskAssistant {
     for (let turn = 0; turn < this.maxIterations; turn++) {
       if (signal.aborted) {
         throw new LlmUnavailableError('the question ran out of time');
+      }
+      if (!(await this.budget.take())) {
+        throw new LlmQuotaExceededError(
+          'the daily budget of model calls is spent',
+        );
       }
       const { message, usage: spent } = await this.llm.complete({
         system,

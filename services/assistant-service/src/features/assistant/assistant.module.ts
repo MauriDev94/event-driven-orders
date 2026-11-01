@@ -4,6 +4,7 @@ import { RedisConnection } from '../../core/cache/redis.connection.js';
 import { ENV, type Env } from '../../core/config/env.js';
 import { OrderHistoryModule } from '../order-history/order-history.module.js';
 import { LlmClient } from './application/contracts/llm-client.js';
+import { ModelCallBudget } from './application/contracts/model-call-budget.js';
 import { OrderQueries } from './application/contracts/order-queries.js';
 import { RateLimiter } from './application/contracts/rate-limiter.js';
 import { buildOrderTools } from './application/tools/order-tools.js';
@@ -11,6 +12,7 @@ import { AskAssistant } from './application/usecases/ask-assistant.js';
 import { FakeLlmClient } from './infrastructure/fake-llm.client.js';
 import { GeminiLlmClient } from './infrastructure/gemini-llm.client.js';
 import { ReadModelOrderQueries } from './infrastructure/read-model-order-queries.js';
+import { RedisModelCallBudget } from './infrastructure/redis-model-call-budget.js';
 import { RedisRateLimiter } from './infrastructure/redis-rate-limiter.js';
 import { AskRateLimitGuard } from './presentation/http/ask-rate-limit.guard.js';
 import { AssistantController } from './presentation/http/assistant.controller.js';
@@ -32,10 +34,19 @@ function createLlmClient(env: Env): LlmClient {
     { provide: LlmClient, useFactory: createLlmClient, inject: [ENV] },
     { provide: OrderQueries, useClass: ReadModelOrderQueries },
     {
+      provide: ModelCallBudget,
+      useFactory: (redis: RedisConnection, env: Env) =>
+        new RedisModelCallBudget(redis, { limit: env.LLM_DAILY_CALL_LIMIT }),
+      inject: [RedisConnection, ENV],
+    },
+    {
       provide: AskAssistant,
-      useFactory: (llm: LlmClient, queries: OrderQueries) =>
-        new AskAssistant(llm, buildOrderTools(queries)),
-      inject: [LlmClient, OrderQueries],
+      useFactory: (
+        llm: LlmClient,
+        queries: OrderQueries,
+        budget: ModelCallBudget,
+      ) => new AskAssistant(llm, buildOrderTools(queries), budget),
+      inject: [LlmClient, OrderQueries, ModelCallBudget],
     },
     {
       provide: RateLimiter,

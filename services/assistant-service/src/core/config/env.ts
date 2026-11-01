@@ -24,6 +24,8 @@ const envSchema = z
       .optional()
       .transform((key) => (key === '' ? undefined : key)),
     ASK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(5),
+    // Model calls per day, below the free tier's daily quota (ADR-0024).
+    LLM_DAILY_CALL_LIMIT: z.coerce.number().int().positive().default(400),
     // Express `trust proxy`: which proxies may set X-Forwarded-For. `false`
     // uses the socket address; behind Caddy, `uniquelocal` (its private IP).
     TRUST_PROXY: z
