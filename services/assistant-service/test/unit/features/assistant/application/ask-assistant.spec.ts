@@ -3,6 +3,7 @@ import {
   LlmQuotaExceededError,
   LlmUnavailableError,
 } from '../../../../../src/features/assistant/application/contracts/llm-client.js';
+import { ModelCallBudgetUnavailableError } from '../../../../../src/features/assistant/application/contracts/model-call-budget.js';
 import { buildOrderTools } from '../../../../../src/features/assistant/application/tools/order-tools.js';
 import { AskAssistant } from '../../../../../src/features/assistant/application/usecases/ask-assistant.js';
 import { NO_DATA_ANSWER } from '../../../../../src/features/assistant/domain/grounding.js';
@@ -11,6 +12,7 @@ import {
   callTools,
   ScriptedLlmClient,
 } from '../../../../support/scripted-llm-client.js';
+import { StubModelCallBudget } from '../../../../support/stub-model-call-budget.js';
 import {
   orderSummary,
   StubOrderQueries,
@@ -40,8 +42,15 @@ describe('AskAssistant', () => {
     });
   });
 
-  function assistant(llm: ScriptedLlmClient, options = {}) {
-    return new AskAssistant(llm, buildOrderTools(queries), { now, ...options });
+  function assistant(
+    llm: ScriptedLlmClient,
+    options = {},
+    budget = new StubModelCallBudget(),
+  ) {
+    return new AskAssistant(llm, buildOrderTools(queries), budget, {
+      now,
+      ...options,
+    });
   }
 
   it('runs the tools the model asks for and cites what they returned', async () => {
@@ -219,5 +228,61 @@ describe('AskAssistant', () => {
     await expect(assistant(llm).execute('hola')).rejects.toThrow(
       LlmQuotaExceededError,
     );
+  });
+
+  describe('daily budget of model calls', () => {
+    it('takes one call from the budget per model turn', async () => {
+      const budget = new StubModelCallBudget();
+      const llm = new ScriptedLlmClient([
+        callTools([
+          { name: 'get_order_timeline', args: { order_id: orderId } },
+        ]),
+        answer(`El pedido ${orderId} se rechazó.`),
+      ]);
+
+      await assistant(llm, {}, budget).execute(`por que ${orderId}?`);
+
+      expect(budget.taken).toBe(2);
+    });
+
+    it('refuses the question without calling the model once the budget is spent', async () => {
+      const llm = new ScriptedLlmClient([answer('hola')]);
+
+      await expect(
+        assistant(llm, {}, new StubModelCallBudget(0)).execute('hola'),
+      ).rejects.toThrow(
+        new LlmQuotaExceededError('the daily budget of model calls is spent'),
+      );
+      expect(llm.requests).toHaveLength(0);
+    });
+
+    it('stops in the middle of a question when the budget runs out', async () => {
+      const llm = new ScriptedLlmClient([
+        callTools([
+          { name: 'get_order_timeline', args: { order_id: orderId } },
+        ]),
+        answer(`El pedido ${orderId} se rechazó.`),
+      ]);
+
+      await expect(
+        assistant(llm, {}, new StubModelCallBudget(1)).execute(
+          `por que ${orderId}?`,
+        ),
+      ).rejects.toThrow(LlmQuotaExceededError);
+      expect(llm.requests).toHaveLength(1);
+    });
+
+    it('lets a budget that cannot be checked through, for a 503', async () => {
+      const llm = new ScriptedLlmClient([answer('hola')]);
+      const budget = new StubModelCallBudget(
+        Number.POSITIVE_INFINITY,
+        new ModelCallBudgetUnavailableError('down'),
+      );
+
+      await expect(assistant(llm, {}, budget).execute('hola')).rejects.toThrow(
+        ModelCallBudgetUnavailableError,
+      );
+      expect(llm.requests).toHaveLength(0);
+    });
   });
 });

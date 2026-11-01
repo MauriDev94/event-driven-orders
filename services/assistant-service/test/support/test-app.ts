@@ -8,6 +8,7 @@ import { RedisConnection } from '../../src/core/cache/redis.connection.js';
 import { ENV, loadEnv } from '../../src/core/config/env.js';
 import { RabbitMQConnection } from '../../src/core/messaging/rabbitmq.connection.js';
 import { LlmClient } from '../../src/features/assistant/application/contracts/llm-client.js';
+import { ModelCallBudget } from '../../src/features/assistant/application/contracts/model-call-budget.js';
 import { FakeBroker } from './fake-broker.js';
 
 export interface TestAppOptions {
@@ -16,6 +17,7 @@ export interface TestAppOptions {
   env?: Record<string, string>;
   broker?: FakeBroker;
   llm?: LlmClient;
+  budget?: ModelCallBudget;
 }
 
 /** The real AppModule, wired like main.ts, with the broker replaced. */
@@ -36,6 +38,11 @@ export async function createTestApp(
     .useValue(options.broker ?? new FakeBroker(false));
   if (options.llm) {
     builder = builder.overrideProvider(LlmClient).useValue(options.llm);
+  }
+  if (options.budget) {
+    builder = builder
+      .overrideProvider(ModelCallBudget)
+      .useValue(options.budget);
   }
   const moduleRef = await builder.compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>();

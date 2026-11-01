@@ -6,6 +6,7 @@ import {
   LlmQuotaExceededError,
   LlmUnavailableError,
 } from '../../src/features/assistant/application/contracts/llm-client.js';
+import { ModelCallBudgetUnavailableError } from '../../src/features/assistant/application/contracts/model-call-budget.js';
 import { toProjectionCommand } from '../../src/features/order-history/application/mappers/order-event.mapper.js';
 import { ProjectOrderEvent } from '../../src/features/order-history/application/usecases/project-order-event.js';
 import { createTestDatabase, type TestDatabase } from '../support/database.js';
@@ -15,7 +16,8 @@ import {
   stockRejected,
   stockReserved,
 } from '../support/order-events.js';
-import { ScriptedLlmClient } from '../support/scripted-llm-client.js';
+import { answer, ScriptedLlmClient } from '../support/scripted-llm-client.js';
+import { StubModelCallBudget } from '../support/stub-model-call-budget.js';
 import { createTestApp, randomIp } from '../support/test-app.js';
 
 const REASON = 'insufficient stock for product SKU-005';
@@ -165,6 +167,48 @@ describe('assistant HTTP API', () => {
         const response = await ask(failing, { question: 'hola' }).expect(503);
 
         expect(response.body).toEqual({ message });
+      } finally {
+        await failing.close();
+      }
+    });
+
+    it('answers 503 without calling the model once the daily budget of model calls is spent', async () => {
+      // The budget is the real one in Redis, shared with the other tests of
+      // the day, so only the second question is sure to find it spent.
+      const llm = new ScriptedLlmClient([answer('hola'), answer('hola')]);
+      const limited = await createTestApp({
+        databaseUrl: database.url,
+        env: { LLM_DAILY_CALL_LIMIT: '1', TRUST_PROXY: 'loopback' },
+        llm,
+      });
+      try {
+        await ask(limited, { question: 'hola' });
+        const response = await ask(limited, { question: 'hola' }).expect(503);
+
+        expect(response.body).toEqual({
+          message: 'the assistant ran out of model quota, try again later',
+        });
+        expect(llm.requests.length).toBeLessThanOrEqual(1);
+      } finally {
+        await limited.close();
+      }
+    });
+
+    it('answers 503 when the daily budget cannot be checked', async () => {
+      const failing = await createTestApp({
+        databaseUrl: database.url,
+        env: { TRUST_PROXY: 'loopback' },
+        budget: new StubModelCallBudget(
+          Number.POSITIVE_INFINITY,
+          new ModelCallBudgetUnavailableError('down'),
+        ),
+      });
+      try {
+        const response = await ask(failing, { question: 'hola' }).expect(503);
+
+        expect(response.body).toEqual({
+          message: 'the assistant is unavailable, try again later',
+        });
       } finally {
         await failing.close();
       }
