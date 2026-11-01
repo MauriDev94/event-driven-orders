@@ -17,7 +17,7 @@
 > - El dominio tiene `Evidence` y `groundAnswer` en vez de una entidad `Answer`. Los tests unitarios de `AskAssistant` usan un LLM con un guion por test (`ScriptedLlmClient`); `FakeLlmClient` queda para Compose, el e2e de Nest y `make e2e`.
 > - La caché del timeline no se invalida con un simple `DEL`: un contador de generación por pedido evita que una lectura concurrente guarde el estado viejo.
 > - El puerto `TimelineCache` y su adaptador viven en `order-history`, y `GetOrderTimeline` lo comparten el endpoint y la herramienta. Por eso el adaptador de `OrderQueries` se llama `ReadModelOrderQueries`: el timeline lo pide al use case y no a Prisma.
-> - El modelo por defecto es `gemini-3.8-flash`, que recomendaba la documentación de Google al empezar la fase C.
+> - El modelo por defecto es `gemini-3.5-flash-lite`: en el plan gratis, `gemini-3.8-flash` permite solo 20 solicitudes por día (unas 10 preguntas) y Flash Lite, 500. El rate limit por IP tampoco protege esa cuota diaria, que es por proyecto; un tope global queda para el deploy.
 > - El límite es de 5 preguntas por minuto (`ASK_RATE_LIMIT_PER_MINUTE`) y `TRUST_PROXY` decide de quién se acepta `X-Forwarded-For` (`uniquelocal` detrás de Caddy).
 
 Un cuarto microservicio, escrito en **TypeScript con NestJS**. Se suma al flujo **solo por eventos**, como los otros tres, y no les cambia nada.
