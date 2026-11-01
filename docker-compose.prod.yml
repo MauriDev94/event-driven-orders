@@ -100,6 +100,7 @@ services:
       - caddy_config:/config
     depends_on:
       - order-service
+      - assistant-service
       - mailpit
       - grafana
     networks:
