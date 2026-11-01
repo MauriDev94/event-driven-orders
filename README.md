@@ -1,7 +1,7 @@
 # Event-Driven Orders
 
 > Sistema de procesamiento de órdenes basado en eventos — microservicios asíncronos en **Python 3.12 / FastAPI**, más uno en **TypeScript / NestJS**, comunicados por **RabbitMQ**, con **Clean Architecture + DDD**.
-> Portfolio project: idempotencia, atomicidad anti race-condition, DLQ + retries con backoff, observabilidad (logging JSON + correlation IDs) y tests e2e contra infraestructura real.
+> Portfolio project: idempotencia, atomicidad anti race-condition, DLQ + retries con backoff, observabilidad (logging JSON + correlation IDs), un asistente con IA que cita los pedidos y eventos en que se basa, y tests e2e contra infraestructura real.
 
 [![CI](https://img.shields.io/badge/CI-passing-brightgreen)](.github/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/)
@@ -9,7 +9,7 @@
 [![Coverage order-service](https://img.shields.io/badge/coverage%20order--service-93%25-brightgreen)](#testing)
 [![Coverage inventory-service](https://img.shields.io/badge/coverage%20inventory--service-90%25-brightgreen)](#testing)
 [![Coverage notification-service](https://img.shields.io/badge/coverage%20notification--service-96%25-brightgreen)](#testing)
-[![Coverage assistant-service](https://img.shields.io/badge/coverage%20assistant--service-96%25-brightgreen)](#testing)
+[![Coverage assistant-service](https://img.shields.io/badge/coverage%20assistant--service-97%25-brightgreen)](#testing)
 
 ---
 
@@ -34,8 +34,10 @@ Sistema de e-commerce dividido en **4 microservicios** que se comunican exclusiv
 
  los 5 eventos ──▶ ┌───────────────────┐
                    │ assistant-service │  read model con la historia de cada pedido
-                   │     (NestJS)      │  GET /v1/assistant/orders/{id}/timeline
-                   └───────────────────┘
+                   │     (NestJS)      │  GET  /v1/assistant/orders/{id}/timeline
+                   └─────────┬─────────┘  POST /v1/assistant/ask (agente LLM, Gemini)
+                             │
+                          [Redis]  rate limit + caché del timeline
 ```
 
 ```mermaid
@@ -47,6 +49,7 @@ sequenceDiagram
     participant N as notification-service
     participant M as Mailpit
     participant A as assistant-service
+    participant L as Gemini
 
     C->>O: POST /v1/orders
     O->>O: persiste orden (pending)
@@ -63,6 +66,10 @@ sequenceDiagram
     Q->>A: los 5 eventos del flujo
     A->>A: proyecta la historia del pedido (idempotente)
     A-->>C: GET /v1/assistant/orders/{id}/timeline
+    C->>A: POST /v1/assistant/ask
+    A->>L: pregunta + herramientas de solo lectura
+    L-->>A: llamadas a herramientas, después la respuesta
+    A-->>C: respuesta con citas verificadas en el servidor
 ```
 
 ## Servicios
@@ -72,7 +79,7 @@ sequenceDiagram
 | `order-service` | FastAPI (REST + consumer) | Crea órdenes, orquesta el ciclo de vida, expone `/v1/orders` |
 | `inventory-service` | Worker (consumer) | Reserva stock con transacción atómica anti race-condition |
 | `notification-service` | Worker (consumer) | Envía notificaciones por email (Mailpit) |
-| `assistant-service` | NestJS (REST + consumer) | Proyecta los 5 eventos en un read model propio (CQRS) y expone la historia de cada pedido. El asistente con IA sobre ese read model llega en el próximo PR ([plan](docs/plan-assistant-service.md)) |
+| `assistant-service` | NestJS (REST + consumer) | Proyecta los 5 eventos en un read model propio (CQRS), expone la historia de cada pedido y responde preguntas con un agente LLM (Gemini) que solo lee ese read model. Redis para el rate limit y la caché |
 
 ## Stack
 
@@ -83,6 +90,8 @@ sequenceDiagram
 | Mensajería | RabbitMQ + `aio-pika`; `amqplib` |
 | Persistencia | PostgreSQL 16 (database-per-service) + SQLAlchemy + Alembic; Prisma 7 |
 | Validación / contratos | Pydantic v2; zod, verificado contra fixtures exportados de Pydantic |
+| Caché / rate limit | Redis 8 (`redis` 6) en `assistant-service` |
+| IA | Gemini en el plan gratis (`@google/genai`), con function calling; un modelo `fake` para correr sin clave |
 | Email (dev) | Mailpit (SMTP + API de inspección, multi-arquitectura) |
 | Observabilidad | `structlog` (logging JSON) + correlation ID por contexto; `nestjs-pino`, `prom-client` |
 | Testing | pytest, pytest-asyncio, `testcontainers` (Postgres y RabbitMQ reales), httpx; Vitest + supertest |
@@ -114,12 +123,15 @@ Cada servicio aplica **Clean Architecture + DDD** (capas `domain` / `application
 | **Database-per-service** | `order-service`, `inventory-service`, `assistant-service` | Cada servicio es dueño exclusivo de su esquema; integración solo por eventos |
 | **Read model (CQRS)** | `assistant-service` | La historia de cada pedido se arma solo con eventos. Tolera eventos fuera de orden (un `stock.reserved` que llega antes que `order.created`) y usa lock optimista entre proyecciones concurrentes |
 | **Contratos independientes del lenguaje** | `shared/contracts/` → zod | Un consumidor en TypeScript procesa los mismos eventos; los fixtures de Pydantic detectan la deriva en CI |
+| **Agente LLM con herramientas de solo lectura** | `assistant-service` | El loop vive en la aplicación y el modelo solo puede leer. Las citas salen de lo que devolvieron las herramientas, y una respuesta que nombra un ID inventado se reemplaza |
+| **Caché invalidada por eventos** | `assistant-service` (Redis) | Cache-aside del timeline que cada evento invalida tras el commit; un contador de generación evita guardar el estado viejo en una carrera. Falla abierta |
+| **Rate limit que falla cerrado** | `assistant-service` (Redis) | Ventana fija por IP con `INCR` + `EXPIRE NX` en un `MULTI`; sin Redis no pasa ninguna pregunta, para cuidar la cuota del modelo |
 
 ## Estructura del monorepo
 
 ```
 event-driven-orders/
-├── docker-compose.yml          # RabbitMQ + 3x Postgres + Mailpit + 4 servicios + Prometheus + Grafana
+├── docker-compose.yml          # RabbitMQ + 3x Postgres + Redis + Mailpit + 4 servicios + Prometheus + Grafana
 ├── .env.example                # variables para docker-compose
 ├── Makefile                    # install / up / down / logs / ps / test / lint / format / e2e
 ├── .github/                    # CI (ci.yml) + plantillas de PR/issues + CODEOWNERS
@@ -133,7 +145,7 @@ event-driven-orders/
     ├── order-service/          # FastAPI: REST + consumer (feature: orders)
     ├── inventory-service/      # worker: consumer (feature: inventory)
     ├── notification-service/   # worker: consumer, sin DB (feature: notifications)
-    └── assistant-service/      # NestJS: consumer + REST (feature: order-history), fuera del workspace de uv
+    └── assistant-service/      # NestJS: consumer + REST (features: order-history, assistant), fuera del workspace de uv
 ```
 
 Cada servicio Python: `app/{core,common,features/<feature>/{domain,application,infrastructure,presentation,di}}`. `assistant-service` usa las mismas capas en `src/features/<feature>/`, y el cableado de DI vive en el módulo de Nest de cada feature.
@@ -148,7 +160,7 @@ make logs      # seguir logs
 make down      # detener
 ```
 
-`make env` copia `.env.example` a `.env` y llena cada contraseña vacía (RabbitMQ, las tres bases y Grafana) con un valor aleatorio. `.env` no se versiona, y `docker compose` no arranca si falta alguna contraseña. Si `.env` ya existe, `make env` conserva sus valores y solo agrega las claves que le falten, por ejemplo las de un servicio nuevo. Si lo regeneras entero con `--force`, corre `docker compose down -v`: Postgres, Grafana y RabbitMQ guardan la contraseña con la que se creó su volumen.
+`make env` copia `.env.example` a `.env` y llena cada contraseña vacía (RabbitMQ, las tres bases, Redis y Grafana) con un valor aleatorio. `.env` no se versiona, y `docker compose` no arranca si falta alguna contraseña. Si `.env` ya existe, `make env` conserva sus valores y solo agrega las claves que le falten, por ejemplo las de un servicio nuevo. Si lo regeneras entero con `--force`, corre `docker compose down -v`: Postgres, Grafana y RabbitMQ guardan la contraseña con la que se creó su volumen.
 
 | Servicio / infra | URL local |
 |---|---|
@@ -159,6 +171,7 @@ make down      # detener
 | RabbitMQ Management | http://localhost:15672 (usuario `guest`, contraseña `RABBITMQ_DEFAULT_PASS` de tu `.env`) |
 | Mailpit UI | http://localhost:8025 |
 | Postgres orders / inventory / assistant | localhost:5433 / localhost:5434 / localhost:5435 |
+| Redis (`assistant-service`) | localhost:6379 (contraseña `REDIS_PASSWORD` de tu `.env`) |
 
 ### Catálogo seed (`inventory-service`)
 
@@ -254,6 +267,33 @@ curl http://localhost:8004/v1/assistant/orders/<order_id>/timeline
 
 Un pedido que el servicio no vio responde 404 con `{"message": "order not found"}`, igual que `order-service`.
 
+### Preguntarle al asistente (`assistant-service`)
+
+`POST /v1/assistant/ask` responde preguntas sobre los pedidos con un agente LLM que solo puede usar tres herramientas de lectura sobre el read model: `get_order_timeline`, `search_orders` y `rejection_summary` ([ADR-0022](docs/adr/0022-asistente-con-agente-y-herramientas-de-solo-lectura.md)).
+
+```bash
+curl -X POST http://localhost:8004/v1/assistant/ask \
+  -H "Content-Type: application/json" \
+  -d '{"question": "¿Por qué se rechazó el pedido <order_id>?"}'
+```
+
+```json
+{
+  "answer": "El pedido <order_id> está rechazado (motivo: insufficient stock for product SKU-005).",
+  "outcome": "answered",
+  "citations": [{ "order_id": "<order_id>", "event_ids": ["…", "…", "…"] }],
+  "tool_calls": [{ "name": "get_order_timeline", "args": { "order_id": "<order_id>" } }],
+  "model": "fake"
+}
+```
+
+- **Citas verificadas.** Las arma el servidor con lo que devolvieron las herramientas, no con lo que dice el modelo. Si la respuesta nombra un ID que ninguna herramienta devolvió, se reemplaza por "No tengo datos suficientes para responder eso." y `outcome` vale `ungrounded`. Los otros valores son `answered`, `no_data` y `max_iterations`.
+- **`fake` por defecto.** Compose corre el asistente con `LLM_PROVIDER=fake`, un modelo de reglas fijas que no necesita clave: con un ID en la pregunta pide su timeline; sin ID, lista los últimos pedidos. Para usar Gemini, crea una clave gratis en [Google AI Studio](https://aistudio.google.com/apikey), ponla en `GEMINI_API_KEY` de tu `.env` junto con `LLM_PROVIDER=gemini` y recrea el servicio (`docker compose up -d assistant-service`). El modelo por defecto es `gemini-3.8-flash` (`LLM_MODEL`). En el plan gratis, Google puede usar lo que recibe para mejorar sus productos: mándale solo pedidos de prueba.
+- **Rate limit en Redis.** 5 preguntas por minuto por IP (`ASK_RATE_LIMIT_PER_MINUTE`), para cuidar la cuota gratis. Pasado el límite, responde 429 con `Retry-After`. Si Redis no responde, la pregunta recibe 503 (falla cerrado), pero el timeline sigue andando ([ADR-0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md)).
+- **Errores claros.** Una pregunta vacía o de más de 500 caracteres da 400. Si el modelo se queda sin cuota (429 de Gemini), no responde a tiempo (30 s por pregunta) o no se puede alcanzar, la respuesta es 503 con un `message` que lo dice.
+
+El timeline también pasa por Redis (cache-aside, TTL 60 s), y cada evento del pedido lo invalida después del commit. Un contador de generación por pedido evita que una lectura concurrente vuelva a guardar el estado viejo ([ADR-0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md)).
+
 ### Verificar la reconexión al broker
 
 1. `make up` — esperar a que los 4 servicios reporten `"broker": "healthy"` en `/health`.
@@ -303,7 +343,7 @@ cd services/order-service && pytest -q --cov=app
 | `inventory-service` | 38 | ~90% | 80 |
 | `notification-service` | 36 | ~96% | 85 |
 | `shared` | 44 unit + 3 forcing | — | — |
-| `assistant-service` | 84 | ~96% | 80 |
+| `assistant-service` | 166 | ~97% | 80 |
 
 > Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`. Los tests de `/health` también usan esa base: el fixture `client` reemplaza la sesión de `get_db_session`, así que nunca le pegan a la base configurada en `localhost`.
 
@@ -316,7 +356,8 @@ npm run test:cov      # unit, integración y e2e de Nest, con el gate de vitest.
 npm run lint && npm run typecheck && npm run format:check
 ```
 
-- **Integración contra servicios reales:** el repositorio Prisma corre contra Postgres (un `postgres:16-alpine` de testcontainers en local; en CI, el Postgres del job vía `TEST_DATABASE_URL`). La suite migra una base plantilla con el mismo `prisma migrate deploy` que corre el contenedor, y cada archivo de tests trabaja sobre una copia. El consumer se prueba contra un `rabbitmq:3.13-management` real: ACK, DLQ para un error permanente y `retry-5s` con `x-retry-count = 1` para uno transitorio.
+- **Integración contra servicios reales:** el repositorio Prisma corre contra Postgres (un `postgres:16-alpine` de testcontainers en local; en CI, el Postgres del job vía `TEST_DATABASE_URL`). La suite migra una base plantilla con el mismo `prisma migrate deploy` que corre el contenedor, y cada archivo de tests trabaja sobre una copia. El consumer se prueba contra un `rabbitmq:3.13-management` real: ACK, DLQ para un error permanente y `retry-5s` con `x-retry-count = 1` para uno transitorio. El rate limit y la caché del timeline corren contra un `redis:8.8-alpine` real (también con Redis caído), y las consultas de las herramientas contra Postgres.
+- **El agente sin red:** `AskAssistant` se prueba con un LLM de guion fijo (topes de turnos, de llamadas por turno y de tiempo, herramientas desconocidas, respuestas sin respaldo), y `GeminiLlmClient` con un `generateContent` falso. Ningún test necesita una clave.
 - **Contratos:** los esquemas zod parsean los fixtures de `test/fixtures/contracts/`, generados desde Pydantic. Si cambias un contrato en `shared/contracts`, regenéralos con `uv run --package shared python scripts/export_contract_fixtures.py`; CI corre el mismo script con `--check`.
 
 ### Forcing de retry/DLQ contra RabbitMQ real (`shared/tests/integration/`)
@@ -339,7 +380,7 @@ El contenedor se levanta una vez por sesión y lo comparten los 3 tests. El fixt
 
 ### Tests e2e (`tests/e2e/`)
 
-Ejercitan el **stack real completo** (RabbitMQ + 3x Postgres + Mailpit + los 4 servicios), levantado con `make up` — sin mocks ni dependency overrides. Se observa el resultado solo a través de fronteras públicas: la API HTTP de `order-service`, la de `assistant-service` y la API de Mailpit (`/api/v1/search` por destinatario y `/api/v1/message/{ID}` para el cuerpo).
+Ejercitan el **stack real completo** (RabbitMQ + 3x Postgres + Redis + Mailpit + los 4 servicios), levantado con `make up` — sin mocks ni dependency overrides. Se observa el resultado solo a través de fronteras públicas: la API HTTP de `order-service`, la de `assistant-service` y la API de Mailpit (`/api/v1/search` por destinatario y `/api/v1/message/{ID}` para el cuerpo).
 
 ```bash
 make up        # levanta el stack completo
@@ -351,6 +392,7 @@ Cubren:
 - **Camino feliz**: `POST /v1/orders` con `SKU-001` (stock=100) -> polling hasta `status == "confirmed"` -> verifica el email de confirmación en Mailpit.
 - **Camino de rechazo**: `POST /v1/orders` con `SKU-005` pidiendo `quantity=999` -> polling hasta `status == "rejected"` -> verifica el email de rechazo (incluye el SKU insuficiente) en Mailpit.
 - **Timeline del asistente**: los mismos dos caminos, con polling hasta que `GET /v1/assistant/orders/{id}/timeline` muestra los tres eventos en orden (`order.created`, `stock.reserved` | `stock.rejected`, `order.confirmed` | `order.rejected`). Verifica el estado, el total, los ítems, el motivo del rechazo y que el `X-Correlation-ID` del POST llegue a cada evento. Un pedido desconocido responde 404.
+- **Preguntas al asistente**: un pedido rechazado de verdad y `POST /v1/assistant/ask` preguntando por qué. La respuesta tiene que citar el pedido con los tres eventos de su timeline (con `fake`, también se compara el texto exacto). Un pedido desconocido da `no_data`.
 
 Todos usan **polling con timeout** (`wait_until`, sin `sleep` fijos) porque la propagación entre servicios es asíncrona. Marcados `@pytest.mark.e2e`.
 
@@ -383,8 +425,10 @@ en [`docs/deploy.md`](docs/deploy.md).
   `python3 scripts/generate_env.py --template deploy/env.production.example
   --output .env.production` la copia con contraseñas aleatorias.
 - `deploy/deploy.sh`: re-deploy idempotente (`git pull` + `up -d --build`).
-- `assistant-service` corre en el stack de producción pero todavía no tiene ruta
-  en Caddy: se publica junto con el deploy (paso 4 del [roadmap](docs/roadmap.md)).
+- `assistant-service` (con Redis) corre en el stack de producción pero todavía no
+  tiene ruta en Caddy: se publica junto con el deploy (paso 4 del [roadmap](docs/roadmap.md)).
+  Detrás de Caddy, `TRUST_PROXY=uniquelocal` hace que el rate limit cuente por la
+  IP del cliente y no por la del proxy.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
@@ -403,7 +447,7 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 | `tests-broker` | El forcing test rápido de retry/DLQ contra un **RabbitMQ real** (testcontainers en el Docker del runner) |
 | `tests-db` (matrix: order, inventory) | `pytest` con cobertura sobre un **Postgres 16** efímero (service container con healthcheck `pg_isready`) |
 | `tests` (notification) | `pytest` con cobertura, sin DB |
-| `assistant-service` | Node 24: oxlint, `tsc --noEmit`, Prettier y Vitest con cobertura contra un Postgres 16 de servicio; además verifica que los fixtures de contratos coincidan con `shared/contracts` |
+| `assistant-service` | Node 24: oxlint, `tsc --noEmit`, Prettier y Vitest con cobertura contra un Postgres 16 de servicio (RabbitMQ y Redis con testcontainers); además verifica que los fixtures de contratos coincidan con `shared/contracts` |
 | `build-images` (matrix: amd64, arm64) | Construye las 4 imágenes con `docker compose build` y verifica que `shared.*` y `app.main` se importen dentro de cada una (en `assistant-service`, `dist/app.module.js` y `prisma --version`, que necesita el binario de Prisma para esa arquitectura). arm64 corre en un runner ARM nativo, como la VM de producción, y además baja las imágenes de terceros del stack de producción |
 
 - **Python 3.12** instalado por uv (`astral-sh/setup-uv@v4`, versión fija); cada job sincroniza solo su paquete del workspace con `uv sync --frozen`. `actions/checkout@v4`, `actions/upload-artifact@v4`.
@@ -430,8 +474,10 @@ Las más significativas:
 | [0013](docs/adr/0013-resiliencia-de-conexion-al-broker.md) | Retry en cold start + watchdog | `connect_robust` no reintenta el primer connect: un servicio quedaba zombie tras un arranque en frío |
 | [0008](docs/adr/0008-tests-contra-postgres-real.md) | Tests de integración contra PostgreSQL real | Con SQLite, los tests de race-condition pasan sin probar nada |
 | [0021](docs/adr/0021-assistant-service-en-typescript.md) | Un servicio en TypeScript sobre los mismos eventos | El contrato es el JSON en el cable: zod replica Pydantic y los fixtures exportados detectan la deriva en CI |
+| [0022](docs/adr/0022-asistente-con-agente-y-herramientas-de-solo-lectura.md) | Agente LLM con herramientas de solo lectura | El modelo no puede cambiar nada ni inventar un pedido: las citas salen de las herramientas, no del texto |
+| [0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md) | Redis: rate limit que falla cerrado y caché que falla abierta | La cuota del modelo queda protegida aunque Redis se caiga, y la invalidación por eventos no deja leer un timeline viejo |
 
-**[Ver los 21 ADRs →](docs/adr/README.md)**
+**[Ver los 23 ADRs →](docs/adr/README.md)**
 
 ---
 
@@ -466,6 +512,9 @@ El sistema expone el **pilar de métricas** como complemento al logging JSON est
 | `edo_events_dlq_total` | Counter | `queue` | Eventos enviados a DLQ |
 | `edo_events_retried_total` | Counter | `queue` | Reintentos de eventos |
 | `edo_event_processing_seconds` | Histogram | `service` | Latencia de procesamiento |
+| `edo_assistant_questions_total` | Counter | `outcome` | Preguntas al asistente: `answered`, `no_data`, `ungrounded`, `max_iterations`, `rate_limited` o `error` |
+| `edo_assistant_tool_calls_total` | Counter | `tool` | Llamadas a herramientas pedidas por el modelo (`unknown` si inventa una) |
+| `edo_assistant_llm_tokens_total` | Counter | `direction` | Tokens de entrada y salida informados por el modelo, para seguir la cuota gratis |
 
 HTTP metrics automáticas en los servicios Python vía `prometheus-fastapi-instrumentator`. `assistant-service` exporta las mismas `edo_*` con `prom-client`, más las métricas por defecto del proceso de Node; un evento duplicado no cuenta como procesado, igual que en Python.
 
@@ -490,6 +539,6 @@ El panel **RabbitMQ Queue Depth** muestra una línea por cola (las 20: las 4 pri
 
 **MVP completo.** Los 3 servicios, el flujo end-to-end, DLQ + retries con backoff, observabilidad (logging JSON + correlation ID + métricas) y el stack de despliegue están implementados y cubiertos por tests.
 
-**En curso: `assistant-service`** (paso 3 del [roadmap](docs/roadmap.md)). La proyección de eventos y el timeline están listos; el asistente con IA y Redis llegan en el próximo PR ([plan](docs/plan-assistant-service.md)).
+**`assistant-service` completo** (paso 3 del [roadmap](docs/roadmap.md), [plan](docs/plan-assistant-service.md)): proyección de eventos, timeline, asistente con IA y Redis. Lo que sigue es el deploy en Oracle Cloud (paso 4).
 
 Lo que queda fuera del alcance está en [Mejoras futuras](#mejoras-futuras-post-mvp); el porqué de cada decisión —y de cada limitación aceptada— está en el [registro de ADRs](docs/adr/README.md).

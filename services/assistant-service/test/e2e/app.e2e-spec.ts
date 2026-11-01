@@ -1,39 +1,22 @@
 import { inject } from 'vitest';
 import type { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
 import request from 'supertest';
-import { AppModule } from '../../src/app.module.js';
-import { ENV, loadEnv } from '../../src/core/config/env.js';
-import { RabbitMQConnection } from '../../src/core/messaging/rabbitmq.connection.js';
 import { toProjectionCommand } from '../../src/features/order-history/application/mappers/order-event.mapper.js';
 import { ProjectOrderEvent } from '../../src/features/order-history/application/usecases/project-order-event.js';
 import { createTestDatabase, type TestDatabase } from '../support/database.js';
 import { FakeBroker } from '../support/fake-broker.js';
+import { createTestApp } from '../support/test-app.js';
 import {
   orderCreated,
   orderRejected,
   stockRejected,
 } from '../support/order-events.js';
 
-async function createApp(
+function createApp(
   databaseUrl: string,
   broker: FakeBroker,
 ): Promise<INestApplication> {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
-    .overrideProvider(ENV)
-    .useValue(
-      loadEnv({
-        DATABASE_URL: databaseUrl,
-        RABBITMQ_URL: 'amqp://broker@localhost:5672/',
-        LOG_LEVEL: 'silent',
-      }),
-    )
-    .overrideProvider(RabbitMQConnection)
-    .useValue(broker)
-    .compile();
-  const app = moduleRef.createNestApplication();
-  await app.init();
-  return app;
+  return createTestApp({ databaseUrl, broker });
 }
 
 describe('assistant-service HTTP API', () => {
@@ -62,6 +45,7 @@ describe('assistant-service HTTP API', () => {
         service: 'assistant-service',
         database: 'healthy',
         broker: 'unhealthy',
+        redis: 'healthy',
       });
     });
 

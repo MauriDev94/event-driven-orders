@@ -1,6 +1,6 @@
 # Plan: `assistant-service`, asistente de pedidos con IA (NestJS)
 
-**Estado:** fases A y B hechas (issue #58), C y D pendientes · **Fecha:** 2026-10-30 · Paso 3 del [roadmap](roadmap.md)
+**Estado:** completo: fases A y B (issue #58, PR #59) y fases C y D (issue #60) · **Fecha:** 2026-10-30, cerrado el 2026-10-31 · Paso 3 del [roadmap](roadmap.md)
 
 > **Cambios respecto del plan original**, registrados en [ADR-0021](adr/0021-assistant-service-en-typescript.md):
 > - `amqplib` 2 trae recovery propio, así que no se usa `amqp-connection-manager`.
@@ -8,6 +8,17 @@
 > - Prisma 7.10 (la 8 era una release candidate), con la configuración en `prisma7.config.ts`.
 > - `/health` informa `healthy` o `unhealthy`, igual que los servicios Python, no `down`.
 > - `order_view` suma una columna `version` para un lock optimista entre proyecciones concurrentes.
+>
+> **Cambios en las fases C y D**, registrados en [ADR-0022](adr/0022-asistente-con-agente-y-herramientas-de-solo-lectura.md) y [ADR-0023](adr/0023-redis-rate-limit-y-cache-del-timeline.md):
+> - Hay una cita por pedido, con todos sus eventos: `citations: [{ order_id, event_ids }]` en vez de `{ order_id, event_id }`.
+> - La respuesta suma `outcome` (`answered`, `no_data`, `ungrounded` o `max_iterations`); `max_iterations` también es una etiqueta de `edo_assistant_questions_total`.
+> - La verificación mira los IDs de pedidos y de eventos, y cuenta como conocidos los que venían en la pregunta.
+> - Además de las 5 iteraciones, hay un tope de 5 llamadas a herramientas por turno y un timeout de 30 s por pregunta.
+> - El dominio tiene `Evidence` y `groundAnswer` en vez de una entidad `Answer`. Los tests unitarios de `AskAssistant` usan un LLM con un guion por test (`ScriptedLlmClient`); `FakeLlmClient` queda para Compose, el e2e de Nest y `make e2e`.
+> - La caché del timeline no se invalida con un simple `DEL`: un contador de generación por pedido evita que una lectura concurrente guarde el estado viejo.
+> - El puerto `TimelineCache` y su adaptador viven en `order-history`, y `GetOrderTimeline` lo comparten el endpoint y la herramienta. Por eso el adaptador de `OrderQueries` se llama `ReadModelOrderQueries`: el timeline lo pide al use case y no a Prisma.
+> - El modelo por defecto es `gemini-3.8-flash`, que recomendaba la documentación de Google al empezar la fase C.
+> - El límite es de 5 preguntas por minuto (`ASK_RATE_LIMIT_PER_MINUTE`) y `TRUST_PROXY` decide de quién se acepta `X-Forwarded-For` (`uniquelocal` detrás de Caddy).
 
 Un cuarto microservicio, escrito en **TypeScript con NestJS**. Se suma al flujo **solo por eventos**, como los otros tres, y no les cambia nada.
 
@@ -168,16 +179,16 @@ services/assistant-service/
 │   │   ├── order-history/              # proyección de eventos al read model
 │   │   │   ├── domain/                 # OrderView, OrderStatus, DomainError
 │   │   │   ├── application/            # puertos (OrderHistoryRepository, TimelineCache), ProjectOrderEvent, mappers
-│   │   │   ├── infrastructure/         # PrismaOrderHistoryRepository
+│   │   │   ├── infrastructure/         # PrismaOrderHistoryRepository, RedisTimelineCache
 │   │   │   ├── presentation/consumers/ # handler de RabbitMQ
 │   │   │   └── order-history.module.ts # cableado de DI (el di/ de los servicios Python)
 │   │   └── assistant/
-│   │       ├── domain/                 # Answer, Citation
+│   │       ├── domain/                 # Evidence, Citation, groundAnswer
 │   │       ├── application/            # puertos (LlmClient, OrderQueries, RateLimiter), herramientas, AskAssistant
-│   │       ├── infrastructure/         # GeminiLlmClient, FakeLlmClient, PrismaOrderQueries, RedisRateLimiter, RedisTimelineCache
+│   │       ├── infrastructure/         # GeminiLlmClient, FakeLlmClient, ReadModelOrderQueries, RedisRateLimiter
 │   │       ├── presentation/http/      # AssistantController, DTOs
 │   │       └── assistant.module.ts
-│   ├── core/                           # config (env validado con zod), messaging (conexión, topología, retry), health, logging, métricas
+│   ├── core/                           # config (env validado con zod), messaging (conexión, topología, retry), cache (conexión a Redis), health, logging, métricas
 │   ├── app.module.ts
 │   └── main.ts
 ├── prisma/                             # schema.prisma y migraciones
@@ -249,8 +260,8 @@ Antes de empezar:
 |---|---|---|
 | **A. Esqueleto** (hecha) | Proyecto Nest (CLI 12, TypeScript estricto, oxlint, Vitest), config validada, `/health`, `/metrics`, logs, Dockerfile, Compose, job de CI, ADR-0021 | `docker compose up` levanta el servicio y `/health` responde 200 con `database` y `broker` |
 | **B. Proyección** (hecha) | Conexión, topología y reintentos; contratos zod con sus fixtures; `OrderView`; `ProjectOrderEvent`; repositorio Prisma idempotente; endpoint de timeline; tests de integración; test e2e en pytest | Un pedido creado en `order-service` aparece con su historia en el timeline; un evento duplicado no cambia nada; un mensaje inválido termina en la DLQ |
-| **C. Agente** | Puertos, herramientas, `AskAssistant` con sus límites (TDD con `FakeLlmClient`), adaptador de Gemini, `POST /v1/assistant/ask`, métricas, ADR-0022 | Con `LLM_PROVIDER=gemini`, "¿por qué se rechazó el pedido X?" responde el motivo citando el pedido, y una pregunta sin datos responde que no sabe |
-| **D. Redis y cierre** | Rate limit, caché con invalidación, ADR-0023, README (diagrama, puertos, comandos, ejemplos con curl, tabla de tests) y roadmap | Pasar el límite devuelve 429; un evento nuevo invalida la caché; el README muestra el servicio |
+| **C. Agente** (hecha) | Puertos, herramientas, `AskAssistant` con sus límites (TDD con `FakeLlmClient`), adaptador de Gemini, `POST /v1/assistant/ask`, métricas, ADR-0022 | Con `LLM_PROVIDER=gemini`, "¿por qué se rechazó el pedido X?" responde el motivo citando el pedido, y una pregunta sin datos responde que no sabe |
+| **D. Redis y cierre** (hecha) | Rate limit, caché con invalidación, ADR-0023, README (diagrama, puertos, comandos, ejemplos con curl, tabla de tests) y roadmap | Pasar el límite devuelve 429; un evento nuevo invalida la caché; el README muestra el servicio |
 
 Si falta tiempo: A, B y C ya forman algo demostrable, y D puede ir después.
 
