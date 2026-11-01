@@ -407,7 +407,8 @@ Dos decisiones sobre el **alcance** de esta suite están registradas como ADR:
 
 Stack listo para correr en una VM Linux con Docker Compose + Caddy (HTTPS
 automático). La guía paso a paso, para una VM gratis de Oracle Cloud (ARM), está
-en [`docs/deploy.md`](docs/deploy.md).
+en [`docs/deploy.md`](docs/deploy.md). No hay una instancia pública: el deploy en
+Oracle quedó en pausa, así que el proyecto se prueba en local con `make up`.
 
 - `docker-compose.prod.yml`: override de producción (sin exponer Postgres/AMQP
   al host, `restart: always`, agrega `caddy`).
@@ -448,7 +449,7 @@ GitHub Actions (`.github/workflows/ci.yml`) corre en cada push y PR a `main`:
 | `tests-db` (matrix: order, inventory) | `pytest` con cobertura sobre un **Postgres 16** efímero (service container con healthcheck `pg_isready`) |
 | `tests` (notification) | `pytest` con cobertura, sin DB |
 | `assistant-service` | Node 24: oxlint, `tsc --noEmit`, Prettier y Vitest con cobertura contra un Postgres 16 de servicio (RabbitMQ y Redis con testcontainers); además verifica que los fixtures de contratos coincidan con `shared/contracts` |
-| `build-images` (matrix: amd64, arm64) | Construye las 4 imágenes con `docker compose build` y verifica que `shared.*` y `app.main` se importen dentro de cada una (en `assistant-service`, `dist/app.module.js` y `prisma --version`, que necesita el binario de Prisma para esa arquitectura). arm64 corre en un runner ARM nativo, como la VM de producción, y además baja las imágenes de terceros del stack de producción |
+| `build-images` (matrix: amd64, arm64) | Construye las 4 imágenes con `docker compose build` y verifica que `shared.*` y `app.main` se importen dentro de cada una (en `assistant-service`, `dist/app.module.js` y `prisma --version`, que necesita el binario de Prisma para esa arquitectura). arm64 corre en un runner ARM nativo, como la VM de Oracle de la guía, y además baja las imágenes de terceros del stack de producción |
 
 - **Python 3.12** instalado por uv (`astral-sh/setup-uv@v4`, versión fija); cada job sincroniza solo su paquete del workspace con `uv sync --frozen`. `actions/checkout@v4`, `actions/upload-artifact@v4`.
 - **Coverage gate:** vive en cada `pyproject.toml` (`[tool.coverage.report] fail_under`). `order-service` y `notification-service` están en **85**; `inventory-service` en **80**. En `assistant-service` está en `vitest.config.ts` (**80** de líneas y sentencias).
@@ -489,7 +490,7 @@ Las más significativas:
 - **Auth en `order-service`** (JWT) para proteger `/v1/orders`.
 - **Customer directory service** para resolver `customer_id -> email` real (hoy es un placeholder `{customer_id}@example.com`).
 - **Idempotencia persistente en `notification-service`** (`processed_events`) para reemplazar el dedup en memoria, que no sobrevive reinicios ([ADR-0009](docs/adr/0009-notification-service-sin-base-de-datos.md)).
-- **Orquestación con Kubernetes** — hoy el deploy de producción es Docker Compose en una sola VM (ver [Despliegue](#despliegue)).
+- **Orquestación con Kubernetes** — hoy el stack de producción está pensado para Docker Compose en una sola VM (ver [Despliegue](#despliegue)).
 
 ---
 
@@ -534,12 +535,14 @@ El panel **RabbitMQ Queue Depth** muestra una línea por cola (las 20: las 4 pri
 
 ### Screenshot del dashboard
 
-> _TODO: agregar screenshot del dashboard en producción tras primer deploy en Oracle Cloud._
+> _TODO: agregar screenshot del dashboard con el stack local y tráfico de la prueba de carga ([roadmap](docs/roadmap.md), paso 4)._
 
 ## Estado
 
-**MVP completo.** Los 3 servicios, el flujo end-to-end, DLQ + retries con backoff, observabilidad (logging JSON + correlation ID + métricas) y el stack de despliegue están implementados y cubiertos por tests.
+**MVP completo.** Los 3 servicios Python, el flujo end-to-end, DLQ + retries con backoff, observabilidad (logging JSON + correlation ID + métricas) y el stack de despliegue están implementados y cubiertos por tests.
 
-**`assistant-service` completo** (paso 3 del [roadmap](docs/roadmap.md), [plan](docs/plan-assistant-service.md)): proyección de eventos, timeline, asistente con IA y Redis. Lo que sigue es el deploy en Oracle Cloud (paso 4).
+**`assistant-service` completo** (paso 3 del [roadmap](docs/roadmap.md), [plan](docs/plan-assistant-service.md)): proyección de eventos, timeline, asistente con IA y Redis.
+
+**Deploy en pausa** (paso 4): no hay una instancia pública, y la guía de [`docs/deploy.md`](docs/deploy.md) sirve para replicarlo. Lo que sigue es la evidencia que no depende de una VM: el GIF del flujo en este README y la guía de estudio del código.
 
 Lo que queda fuera del alcance está en [Mejoras futuras](#mejoras-futuras-post-mvp); el porqué de cada decisión —y de cada limitación aceptada— está en el [registro de ADRs](docs/adr/README.md).
