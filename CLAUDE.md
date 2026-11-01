@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Portfolio project: an order system split into three Python 3.12 / FastAPI microservices plus one TypeScript / NestJS service, all communicating **only through RabbitMQ events** (no service-to-service HTTP). The MVP is complete (phases F0–F9 merged), and so is roadmap step 3 (`assistant-service`, all phases of `docs/plan-assistant-service.md`); pending work lives in `docs/roadmap.md` (next: step 4, the deploy) and the open GitHub issues.
+Portfolio project: an order system split into three Python 3.12 / FastAPI microservices plus one TypeScript / NestJS service, all communicating **only through RabbitMQ events** (no service-to-service HTTP). The MVP is complete (phases F0–F9 merged), and so is roadmap step 3 (`assistant-service`, all phases of `docs/plan-assistant-service.md`); pending work lives in `docs/roadmap.md` (step 4: the deploy is on hold since 2026-11-01, so next come the README GIF and the study guide) and the open GitHub issues.
 
 - `order-service`: REST API (`POST /v1/orders`, `GET /v1/orders/{id}`) plus a consumer for stock results. Own Postgres.
 - `inventory-service`: worker that reserves stock on `order.created`. Own Postgres.
