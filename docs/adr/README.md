@@ -52,6 +52,7 @@ Un ADR no se reescribe cuando la realidad cambia: se marca como `Superseded by A
 | [0021](0021-assistant-service-en-typescript.md) | `assistant-service` en TypeScript/NestJS: contratos zod verificados contra fixtures de Pydantic, `amqplib` con recovery nativo, Prisma 7 | Aceptada |
 | [0022](0022-asistente-con-agente-y-herramientas-de-solo-lectura.md) | Asistente con un agente y herramientas de solo lectura sobre Gemini: loop en la aplicación, citas armadas en el servidor y verificación de IDs, `fake` por defecto | Aceptada |
 | [0023](0023-redis-rate-limit-y-cache-del-timeline.md) | Redis para el rate limit del asistente (falla cerrado) y una caché del timeline invalidada por eventos, con contador de generación (falla abierta) | Aceptada |
+| [0024](0024-tope-diario-de-llamadas-al-modelo.md) | Tope diario de llamadas al modelo en Redis, contado por día del Pacífico (cuando Gemini reinicia su cuota), y un reintento ante un 500 o 503 | Aceptada |
 
 ### Testing y build
 
