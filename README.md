@@ -125,7 +125,7 @@ Cada servicio aplica **Clean Architecture + DDD** (capas `domain` / `application
 | **Contratos independientes del lenguaje** | `shared/contracts/` → zod | Un consumidor en TypeScript procesa los mismos eventos; los fixtures de Pydantic detectan la deriva en CI |
 | **Agente LLM con herramientas de solo lectura** | `assistant-service` | El loop vive en la aplicación y el modelo solo puede leer. Las citas salen de lo que devolvieron las herramientas, y una respuesta que nombra un ID inventado se reemplaza |
 | **Caché invalidada por eventos** | `assistant-service` (Redis) | Cache-aside del timeline que cada evento invalida tras el commit; un contador de generación evita guardar el estado viejo en una carrera. Falla abierta |
-| **Rate limit que falla cerrado** | `assistant-service` (Redis) | Ventana fija por IP con `INCR` + `EXPIRE NX` en un `MULTI`; sin Redis no pasa ninguna pregunta, para cuidar la cuota del modelo |
+| **Rate limit y tope diario que fallan cerrado** | `assistant-service` (Redis) | Ventana fija por IP con `INCR` + `EXPIRE NX` en un `MULTI`, y un tope global de llamadas al modelo por día del Pacífico, cuando Gemini reinicia su cuota; sin Redis no pasa ninguna pregunta |
 
 ## Estructura del monorepo
 
@@ -289,8 +289,8 @@ curl -X POST http://localhost:8004/v1/assistant/ask \
 
 - **Citas verificadas.** Las arma el servidor con lo que devolvieron las herramientas, no con lo que dice el modelo. Si la respuesta nombra un ID que ninguna herramienta devolvió, se reemplaza por "No tengo datos suficientes para responder eso." y `outcome` vale `ungrounded`. Los otros valores son `answered`, `no_data` y `max_iterations`.
 - **`fake` por defecto.** Compose corre el asistente con `LLM_PROVIDER=fake`, un modelo de reglas fijas que no necesita clave: con un ID en la pregunta pide su timeline; sin ID, lista los últimos pedidos. Para usar Gemini, crea una clave gratis en [Google AI Studio](https://aistudio.google.com/apikey), ponla en `GEMINI_API_KEY` de tu `.env` junto con `LLM_PROVIDER=gemini` y recrea el servicio (`docker compose up -d assistant-service`). El modelo por defecto es `gemini-3.5-flash-lite` (`LLM_MODEL`): en el plan gratis permite 500 solicitudes por día, y `gemini-3.8-flash`, solo 20. En el plan gratis, Google puede usar lo que recibe para mejorar sus productos: mándale solo pedidos de prueba.
-- **Rate limit en Redis.** 5 preguntas por minuto por IP (`ASK_RATE_LIMIT_PER_MINUTE`), para cuidar la cuota gratis. Pasado el límite, responde 429 con `Retry-After`. La cuota diaria de Google es por proyecto, así que entre varios visitantes se puede agotar igual; entonces la respuesta es 503. Si Redis no responde, la pregunta recibe 503 (falla cerrado), pero el timeline sigue andando ([ADR-0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md)).
-- **Errores claros.** Una pregunta vacía o de más de 500 caracteres da 400. Si el modelo se queda sin cuota (429 de Gemini), no responde a tiempo (30 s por pregunta) o no se puede alcanzar, la respuesta es 503 con un `message` que lo dice.
+- **Rate limit en Redis.** 5 preguntas por minuto por IP (`ASK_RATE_LIMIT_PER_MINUTE`), para cuidar la cuota gratis. Pasado el límite, responde 429 con `Retry-After`. Como la cuota diaria de Google es por proyecto y no por IP, hay además un tope global de 400 llamadas al modelo por día (`LLM_DAILY_CALL_LIMIT`), contado en Redis con la fecha de la hora del Pacífico, que es cuando Gemini reinicia su cuota; pasado el tope, la respuesta es 503 ([ADR-0024](docs/adr/0024-tope-diario-de-llamadas-al-modelo.md)). Si Redis no responde, la pregunta recibe 503 (falla cerrado), pero el timeline sigue andando ([ADR-0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md)).
+- **Errores claros.** Una pregunta vacía o de más de 500 caracteres da 400. Si el modelo se queda sin cuota (429 de Gemini), no responde a tiempo (30 s por pregunta) o no se puede alcanzar, la respuesta es 503 con un `message` que lo dice. Un 500 o 503 de Gemini, que suelen ser fallas momentáneas, se reintenta una vez.
 
 El timeline también pasa por Redis (cache-aside, TTL 60 s), y cada evento del pedido lo invalida después del commit. Un contador de generación por pedido evita que una lectura concurrente vuelva a guardar el estado viejo ([ADR-0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md)).
 
@@ -343,7 +343,7 @@ cd services/order-service && pytest -q --cov=app
 | `inventory-service` | 38 | ~90% | 80 |
 | `notification-service` | 36 | ~96% | 85 |
 | `shared` | 44 unit + 3 forcing | — | — |
-| `assistant-service` | 166 | ~97% | 80 |
+| `assistant-service` | 183 | ~97% | 80 |
 
 > Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`. Los tests de `/health` también usan esa base: el fixture `client` reemplaza la sesión de `get_db_session`, así que nunca le pegan a la base configurada en `localhost`.
 
@@ -412,7 +412,8 @@ en [`docs/deploy.md`](docs/deploy.md).
 - `docker-compose.prod.yml`: override de producción (sin exponer Postgres/AMQP
   al host, `restart: always`, agrega `caddy`).
 - `deploy/Caddyfile`: reverse proxy — `order-service` público en el dominio
-  raíz; Mailpit UI y Grafana en `mailpit.` y `grafana.<DOMAIN>`, detrás de
+  raíz y `assistant-service` en `/v1/assistant/*` del mismo dominio (sin su
+  `/health` ni su `/metrics`); Mailpit UI y Grafana en `mailpit.` y `grafana.<DOMAIN>`, detrás de
   basic auth. Grafana pide además su propio login, y Caddy no le reenvía el
   header `Authorization`: Grafana lo tomaría como un intento de login fallido
   de `admin` y lo bloquearía.
@@ -425,10 +426,9 @@ en [`docs/deploy.md`](docs/deploy.md).
   `python3 scripts/generate_env.py --template deploy/env.production.example
   --output .env.production` la copia con contraseñas aleatorias.
 - `deploy/deploy.sh`: re-deploy idempotente (`git pull` + `up -d --build`).
-- `assistant-service` (con Redis) corre en el stack de producción pero todavía no
-  tiene ruta en Caddy: se publica junto con el deploy (paso 4 del [roadmap](docs/roadmap.md)).
-  Detrás de Caddy, `TRUST_PROXY=uniquelocal` hace que el rate limit cuente por la
-  IP del cliente y no por la del proxy.
+- Detrás de Caddy, `TRUST_PROXY=uniquelocal` hace que el rate limit del asistente
+  cuente por la IP del cliente y no por la del proxy. Caddy reemplaza el
+  `X-Forwarded-For` que mande el cliente, así que no se puede falsificar.
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml \
@@ -476,8 +476,9 @@ Las más significativas:
 | [0021](docs/adr/0021-assistant-service-en-typescript.md) | Un servicio en TypeScript sobre los mismos eventos | El contrato es el JSON en el cable: zod replica Pydantic y los fixtures exportados detectan la deriva en CI |
 | [0022](docs/adr/0022-asistente-con-agente-y-herramientas-de-solo-lectura.md) | Agente LLM con herramientas de solo lectura | El modelo no puede cambiar nada ni inventar un pedido: las citas salen de las herramientas, no del texto |
 | [0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md) | Redis: rate limit que falla cerrado y caché que falla abierta | La cuota del modelo queda protegida aunque Redis se caiga, y la invalidación por eventos no deja leer un timeline viejo |
+| [0024](docs/adr/0024-tope-diario-de-llamadas-al-modelo.md) | Tope diario de llamadas al modelo, por día del Pacífico | Muchos visitantes juntos no agotan la cuota gratis de Gemini: el servicio corta antes que Google |
 
-**[Ver los 23 ADRs →](docs/adr/README.md)**
+**[Ver los 24 ADRs →](docs/adr/README.md)**
 
 ---
 
