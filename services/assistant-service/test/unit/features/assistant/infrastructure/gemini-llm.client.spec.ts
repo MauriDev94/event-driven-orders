@@ -50,6 +50,7 @@ describe('GeminiLlmClient', () => {
     );
     client = new GeminiLlmClient({ generateContent }, 'gemini-test', {
       maxOutputTokens: 512,
+      retryDelayMs: 0,
     });
   });
 
@@ -313,6 +314,67 @@ describe('GeminiLlmClient', () => {
       await expect(client.complete(request())).rejects.toThrow(
         new LlmUnavailableError('could not reach the model API'),
       );
+    });
+  });
+
+  describe('retry', () => {
+    it.each([500, 503])(
+      'retries once when the API answers %d, and returns the second answer',
+      async (status) => {
+        generateContent.mockRejectedValueOnce(
+          new ApiError({ message: 'unavailable', status }),
+        );
+
+        const turn = await client.complete(request());
+
+        expect(turn.message.text).toBe('ok');
+        expect(generateContent).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    it('gives up after one retry', async () => {
+      generateContent.mockRejectedValue(
+        new ApiError({ message: 'unavailable', status: 503 }),
+      );
+
+      await expect(client.complete(request())).rejects.toThrow(
+        new LlmUnavailableError('the model API answered 503'),
+      );
+      expect(generateContent).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([429, 400])('does not retry a %d', async (status) => {
+      generateContent.mockRejectedValue(
+        new ApiError({ message: 'no', status }),
+      );
+
+      await expect(client.complete(request())).rejects.toThrow();
+      expect(generateContent).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not retry a network failure', async () => {
+      generateContent.mockRejectedValue(new TypeError('fetch failed'));
+
+      await expect(client.complete(request())).rejects.toThrow();
+      expect(generateContent).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops waiting when the question runs out of time', async () => {
+      const controller = new AbortController();
+      const slow = new GeminiLlmClient({ generateContent }, 'gemini-test', {
+        retryDelayMs: 60_000,
+      });
+      generateContent.mockImplementationOnce(async () => {
+        setTimeout(() => controller.abort(), 10);
+        throw new ApiError({ message: 'unavailable', status: 503 });
+      });
+
+      await expect(
+        slow.complete(request({ signal: controller.signal })),
+      ).rejects.toThrow(
+        new LlmUnavailableError('the model did not answer in time'),
+      );
+      expect(generateContent).toHaveBeenCalledTimes(1);
     });
   });
 });
