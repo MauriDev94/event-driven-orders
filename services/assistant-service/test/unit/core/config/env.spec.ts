@@ -14,7 +14,7 @@ describe('loadEnv', () => {
       PORT: 8000,
       LOG_LEVEL: 'info',
       LLM_PROVIDER: 'fake',
-      LLM_MODEL: 'gemini-3.8-flash',
+      LLM_MODEL: 'gemini-3.5-flash-lite',
       ASK_RATE_LIMIT_PER_MINUTE: 5,
       TRUST_PROXY: false,
     });
@@ -56,14 +56,14 @@ describe('loadEnv', () => {
       loadEnv({
         ...valid,
         LLM_PROVIDER: 'gemini',
-        LLM_MODEL: 'gemini-3.5-flash-lite',
+        LLM_MODEL: 'gemini-3.8-flash',
         GEMINI_API_KEY: key,
         ASK_RATE_LIMIT_PER_MINUTE: '12',
         TRUST_PROXY: 'loopback, uniquelocal',
       }),
     ).toMatchObject({
       LLM_PROVIDER: 'gemini',
-      LLM_MODEL: 'gemini-3.5-flash-lite',
+      LLM_MODEL: 'gemini-3.8-flash',
       GEMINI_API_KEY: key,
       ASK_RATE_LIMIT_PER_MINUTE: 12,
       TRUST_PROXY: 'loopback, uniquelocal',

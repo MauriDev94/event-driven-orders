@@ -36,7 +36,7 @@ Un LLM inventa con soltura. El riesgo concreto es que responda con un ID de pedi
 - Cada turno del modelo guarda su contenido original (`providerData`) y se reenvía tal cual, para que las thought signatures vuelvan intactas.
 - `thinkingLevel: LOW` y `maxOutputTokens` acotan el consumo de cuota.
 - Un 429 de Gemini (`RESOURCE_EXHAUSTED`) se traduce a `LlmQuotaExceededError` y el endpoint responde 503, sin reintentar en bucle. Un timeout, un 5xx o una falla de red también dan 503.
-- El modelo por defecto es `gemini-3.8-flash`, que la documentación de Google recomendaba para proyectos nuevos al empezar la fase (2026-10-31), y se cambia con `LLM_MODEL`.
+- El modelo por defecto es `gemini-3.5-flash-lite`, por la cuota diaria. Según AI Studio, en el plan gratis de una cuenta nueva (2026-10-31), `gemini-3.8-flash` permite 5 solicitudes por minuto y 20 por día, y `gemini-3.5-flash-lite`, 15 por minuto y 500 por día. Cada pregunta hace al menos dos llamadas (pedir la herramienta y responder), así que con 3.8 Flash alcanzarían unas 10 preguntas al día entre todos los visitantes. Para responder con los datos estructurados que trae una herramienta, Flash Lite basta. Se cambia con `LLM_MODEL`.
 
 **5. `fake` por defecto.**
 
@@ -73,7 +73,9 @@ La fecha actual va en el prompt, para que "hoy" tenga sentido.
 **Negativas / limitaciones**
 
 - **La verificación mira IDs, no hechos.** Si el modelo dice un motivo o un monto equivocado sin nombrar un ID falso, la respuesta pasa. Las citas permiten revisarla, pero nada la corrige sola.
-- **El plan gratis comparte datos.** Google puede usar lo que recibe, así que solo deben viajar pedidos de prueba. Los límites del plan pueden cambiar sin aviso; el rate limit propio ([ADR-0023](0023-redis-rate-limit-y-cache-del-timeline.md)) los mantiene por debajo.
+- **El plan gratis comparte datos.** Google puede usar lo que recibe, así que solo deben viajar pedidos de prueba.
+- **El rate limit propio no protege la cuota diaria.** Cuenta por IP y por minuto ([ADR-0023](0023-redis-rate-limit-y-cache-del-timeline.md)), mientras que la cuota de Google es por proyecto y por día, así que varios visitantes pueden agotarla. Cuando pasa, Gemini responde 429 y el endpoint responde 503, sin caerse. Un tope diario global queda para el deploy (paso 4 del roadmap). Además, Google puede cambiar los límites del plan sin aviso.
+- **"Hoy" es el día UTC.** El prompt lleva la hora actual en UTC (`toISOString()`), así que en Chile (UTC-3), después de las 21:00, "hoy" ya es el día siguiente. Se vio en la prueba en vivo: a las 23:52 hora de Chile, "¿qué pedidos se rechazaron hoy?" consultó el 2026-11-01. Una zona horaria configurable queda en el roadmap.
 - **Las preguntas son independientes.** No hay memoria de conversación ni streaming; el cliente espera la respuesta completa, hasta 30 s.
 - **La calidad depende del modelo.** El fake solo prueba el mecanismo; si las respuestas son buenas, se ve a mano con `LLM_PROVIDER=gemini` (un set de evaluación queda en "Después" del plan).
 

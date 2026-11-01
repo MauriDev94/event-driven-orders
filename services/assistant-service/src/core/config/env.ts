@@ -16,7 +16,8 @@ const envSchema = z
       .default('info'),
     // `fake` runs without a key (the Compose default); `gemini` is the real model.
     LLM_PROVIDER: z.enum(['fake', 'gemini']).default('fake'),
-    LLM_MODEL: z.string().min(1).default('gemini-3.8-flash'),
+    // Flash Lite for the free tier's daily quota (ADR-0022).
+    LLM_MODEL: z.string().min(1).default('gemini-3.5-flash-lite'),
     // Compose passes an unset key as an empty string: that counts as missing.
     GEMINI_API_KEY: z
       .string()
