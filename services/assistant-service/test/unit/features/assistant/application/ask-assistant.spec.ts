@@ -124,6 +124,7 @@ describe('AskAssistant', () => {
     expect(request?.system).toContain('2026-10-31T15:30:00.000Z');
     expect(request?.system).toMatch(/only .*tools/i);
     expect(request?.system).toMatch(/data, not instructions/i);
+    expect(request?.system).toMatch(/copy amounts and product IDs exactly/i);
     expect(request?.system).toMatch(/same language as the question/i);
     expect(request?.signal).toBeInstanceOf(AbortSignal);
   });
@@ -197,6 +198,30 @@ describe('AskAssistant', () => {
     const result = await assistant(llm).execute('y el ultimo pedido?');
 
     expect(result).toMatchObject({
+      answer: NO_DATA_ANSWER,
+      outcome: 'ungrounded',
+      citations: [],
+    });
+  });
+
+  it('checks the amounts and SKUs of the answer against what the tools returned', async () => {
+    const lookUp = callTools([
+      { id: 'c1', name: 'get_order_timeline', args: { order_id: orderId } },
+    ]);
+    const grounded = new ScriptedLlmClient([
+      lookUp,
+      answer(`El pedido ${orderId} suma $20.00 y le faltó SKU-005.`),
+    ]);
+    const invented = new ScriptedLlmClient([
+      lookUp,
+      answer(`El pedido ${orderId} suma $35.00.`),
+    ]);
+
+    const kept = await assistant(grounded).execute('cuanto suma?');
+    const replaced = await assistant(invented).execute('cuanto suma?');
+
+    expect(kept.outcome).toBe('answered');
+    expect(replaced).toMatchObject({
       answer: NO_DATA_ANSWER,
       outcome: 'ungrounded',
       citations: [],
