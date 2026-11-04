@@ -125,6 +125,74 @@ describe('groundAnswer', () => {
   });
 });
 
+describe('groundAnswer with amounts and SKUs', () => {
+  const order = randomUUID();
+
+  function evidence(): Evidence {
+    const seen = new Evidence();
+    seen.add(order);
+    seen.addValues({
+      found: true,
+      order: {
+        order_id: order,
+        total_amount: '1250.00',
+        items: [{ product_id: 'SKU-005', quantity: 2, unit_price: '625.00' }],
+        events: [{ reason: 'insufficient stock for product SKU-005' }],
+      },
+    });
+    return seen;
+  }
+
+  it.each([
+    '$1.250',
+    '$1250.00',
+    '$ 1,250.00',
+    '1.250,00',
+    '1250.0',
+    '625,00 cada uno',
+  ])('accepts an amount the tools returned, written as %s', (amount) => {
+    const text = `El pedido ${order} suma ${amount}.`;
+
+    expect(groundAnswer(text, '?', evidence())).toMatchObject({
+      text,
+      outcome: 'answered',
+    });
+  });
+
+  it('replaces an answer with an amount no tool returned', () => {
+    expect(
+      groundAnswer(`El pedido ${order} suma $99.90.`, '?', evidence()),
+    ).toEqual({ text: NO_DATA_ANSWER, outcome: 'ungrounded', citations: [] });
+  });
+
+  it('accepts a SKU the tools returned, in any case', () => {
+    const text = `Faltó stock de sku-005 en el pedido ${order}.`;
+
+    expect(groundAnswer(text, '?', evidence()).outcome).toBe('answered');
+  });
+
+  it('replaces an answer with a SKU no tool returned', () => {
+    expect(
+      groundAnswer(`Faltó stock de SKU-007 en ${order}.`, '?', evidence()),
+    ).toEqual({ text: NO_DATA_ANSWER, outcome: 'ungrounded', citations: [] });
+  });
+
+  it('does not check counts, quantities, dates or times', () => {
+    const text =
+      'El 2026-11-01 a las 10:30 se rechazaron 3 pedidos, uno con 2 unidades.';
+
+    expect(groundAnswer(text, '?', evidence()).outcome).toBe('answered');
+  });
+
+  it('lets the answer repeat an amount or a SKU the question brought', () => {
+    const text = 'No hay pedidos de SKU-009 por más de $100.';
+
+    expect(
+      groundAnswer(text, '¿hay pedidos de SKU-009 sobre $100?', new Evidence()),
+    ).toEqual({ text, outcome: 'no_data', citations: [] });
+  });
+});
+
 describe('Evidence', () => {
   it('merges the events seen for the same order across tool calls', () => {
     const order = randomUUID();

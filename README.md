@@ -123,7 +123,7 @@ Cada servicio aplica **Clean Architecture + DDD** (capas `domain` / `application
 | **Database-per-service** | `order-service`, `inventory-service`, `assistant-service` | Cada servicio es dueño exclusivo de su esquema; integración solo por eventos |
 | **Read model (CQRS)** | `assistant-service` | La historia de cada pedido se arma solo con eventos. Tolera eventos fuera de orden (un `stock.reserved` que llega antes que `order.created`) y usa lock optimista entre proyecciones concurrentes |
 | **Contratos independientes del lenguaje** | `shared/contracts/` → zod | Un consumidor en TypeScript procesa los mismos eventos; los fixtures de Pydantic detectan la deriva en CI |
-| **Agente LLM con herramientas de solo lectura** | `assistant-service` | El loop vive en la aplicación y el modelo solo puede leer. Las citas salen de lo que devolvieron las herramientas, y una respuesta que nombra un ID inventado se reemplaza |
+| **Agente LLM con herramientas de solo lectura** | `assistant-service` | El loop vive en la aplicación y el modelo solo puede leer. Las citas salen de lo que devolvieron las herramientas, y una respuesta que nombra un ID, un monto o un SKU inventados se reemplaza |
 | **Caché invalidada por eventos** | `assistant-service` (Redis) | Cache-aside del timeline que cada evento invalida tras el commit; un contador de generación evita guardar el estado viejo en una carrera. Falla abierta |
 | **Rate limit y tope diario que fallan cerrado** | `assistant-service` (Redis) | Ventana fija por IP con `INCR` + `EXPIRE NX` en un `MULTI`, y un tope global de llamadas al modelo por día del Pacífico, cuando Gemini reinicia su cuota; sin Redis no pasa ninguna pregunta |
 
@@ -287,7 +287,7 @@ curl -X POST http://localhost:8004/v1/assistant/ask \
 }
 ```
 
-- **Citas verificadas.** Las arma el servidor con lo que devolvieron las herramientas, no con lo que dice el modelo. Si la respuesta nombra un ID que ninguna herramienta devolvió, se reemplaza por "No tengo datos suficientes para responder eso." y `outcome` vale `ungrounded`. Los otros valores son `answered`, `no_data` y `max_iterations`.
+- **Citas verificadas.** Las arma el servidor con lo que devolvieron las herramientas, no con lo que dice el modelo. Si la respuesta nombra un ID, un monto o un SKU que ninguna herramienta devolvió (ni traía la pregunta), se reemplaza por "No tengo datos suficientes para responder eso." y `outcome` vale `ungrounded`. Los otros valores son `answered`, `no_data` y `max_iterations`. Los montos se reconocen escritos de varias formas (`$1.250`, `1.250,00`, `1250.0`) y se comparan por valor; los conteos, las cantidades y las fechas no se revisan. Una suma que calcule el modelo tampoco está en la evidencia, así que el prompt le pide copiar los montos tal como vienen.
 - **Sin texto libre en los ids.** Lo que leen las herramientas sale de los pedidos, y `order-service` solo acepta en `customer_id` y `product_id` ids de hasta 36 caracteres, con letras, dígitos, `.`, `_` y `-`; cualquier otra cosa da 422. Así un pedido no puede colar instrucciones en lo que lee el modelo.
 - **`fake` por defecto.** Compose corre el asistente con `LLM_PROVIDER=fake`, un modelo de reglas fijas que no necesita clave: con un ID en la pregunta pide su timeline; sin ID, lista los últimos pedidos. Para usar Gemini, crea una clave gratis en [Google AI Studio](https://aistudio.google.com/apikey), ponla en `GEMINI_API_KEY` de tu `.env` junto con `LLM_PROVIDER=gemini` y recrea el servicio (`docker compose up -d assistant-service`). El modelo por defecto es `gemini-3.5-flash-lite` (`LLM_MODEL`): en el plan gratis permite 500 solicitudes por día, y `gemini-3.8-flash`, solo 20. En el plan gratis, Google puede usar lo que recibe para mejorar sus productos: mándale solo pedidos de prueba.
 - **Rate limit en Redis.** 5 preguntas por minuto por IP (`ASK_RATE_LIMIT_PER_MINUTE`), para cuidar la cuota gratis. Pasado el límite, responde 429 con `Retry-After`. Como la cuota diaria de Google es por proyecto y no por IP, hay además un tope global de 400 llamadas al modelo por día (`LLM_DAILY_CALL_LIMIT`), contado en Redis con la fecha de la hora del Pacífico, que es cuando Gemini reinicia su cuota; pasado el tope, la respuesta es 503 ([ADR-0024](docs/adr/0024-tope-diario-de-llamadas-al-modelo.md)). Si Redis no responde, la pregunta recibe 503 (falla cerrado), pero el timeline sigue andando ([ADR-0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md)).
@@ -344,7 +344,7 @@ cd services/order-service && pytest -q --cov=app
 | `inventory-service` | 38 | ~90% | 80 |
 | `notification-service` | 36 | ~96% | 85 |
 | `shared` | 44 unit + 3 forcing | — | — |
-| `assistant-service` | 183 | ~97% | 80 |
+| `assistant-service` | 195 | ~97% | 80 |
 
 > Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`. Los tests de `/health` también usan esa base: el fixture `client` reemplaza la sesión de `get_db_session`, así que nunca le pegan a la base configurada en `localhost`.
 
