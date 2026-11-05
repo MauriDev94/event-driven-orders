@@ -63,7 +63,11 @@ npm ci
 npm run test:cov                 # Vitest: unit, integration and Nest e2e; gate in vitest.config.ts (lines/statements 80)
 npx vitest run test/unit/core/messaging/retry-policy.spec.ts -t "<test name>"
 npm run lint && npm run typecheck && npm run format:check   # oxlint --type-aware, tsc --noEmit, prettier
+npm run eval                     # eval set (eval/) with the fake model: no key, no Docker, no network
+npm run eval:gemini              # same set against real Gemini; reads GEMINI_API_KEY and LLM_MODEL from the root .env
 ```
+
+The eval set (`eval/`, run with tsx, not part of the build or coverage) asks the 16 cases of `eval/cases.ts` through the real `AskAssistant` over `InMemoryOrderQueries` and scores them with fixed rules (`eval/score.ts`). `eval:gemini` spends real quota (~28 calls per run): it spaces calls 4.5 s apart, stops at the first quota error or at `EVAL_MAX_MODEL_CALLS` (100), and isn't run in CI. Save notable runs in `eval/results/` and update the score in the README.
 
 `prisma generate` runs as a pre-script of lint, typecheck and test; the client goes to `src/generated/` (gitignored). After changing a contract in `shared/contracts`, regenerate the zod fixtures from the repo root with `uv run --package shared python scripts/export_contract_fixtures.py` (CI runs it with `--check`).
 
