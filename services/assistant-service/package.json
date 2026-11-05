@@ -12,17 +12,19 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:prod": "node dist/main.js",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"eval/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"eval/**/*.ts\"",
     "prelint": "prisma generate",
-    "lint": "oxlint --type-aware src/ test/",
+    "lint": "oxlint --type-aware src/ test/ eval/",
     "pretypecheck": "prisma generate",
     "typecheck": "tsc --noEmit",
     "pretest": "prisma generate",
     "test": "vitest run",
     "test:watch": "vitest",
     "pretest:cov": "prisma generate",
-    "test:cov": "vitest run --coverage"
+    "test:cov": "vitest run --coverage",
+    "eval": "tsx --env-file-if-exists=../../.env eval/main.ts --provider fake",
+    "eval:gemini": "tsx --env-file-if-exists=../../.env eval/main.ts --provider gemini"
   },
   "dependencies": {
     "@google/genai": "2.32.0",
@@ -59,6 +61,7 @@
     "source-map-support": "^0.5.21",
     "supertest": "^7.0.0",
     "testcontainers": "12.2.1",
+    "tsx": "4.23.15",
     "typescript": "^6.0.2",
     "vite": "^8.0.0",
     "vitest": "^4.1.2"
