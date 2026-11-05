@@ -58,6 +58,18 @@ class RunBudget extends ModelCallBudget {
   }
 }
 
+const SERVICE_TIMEOUT_MS = 30_000;
+const MAX_TURNS = 5;
+
+/**
+ * The service gives a question 30 s. The throttle waits before each of its
+ * up to 5 model turns, and that wait is the eval's doing, not the model's
+ * slowness, so it is added on top.
+ */
+export function questionTimeoutMs(minIntervalMs: number): number {
+  return SERVICE_TIMEOUT_MS + MAX_TURNS * minIntervalMs;
+}
+
 export interface EvalOptions {
   llm: LlmClient;
   cases?: readonly EvalCase[];
@@ -111,7 +123,10 @@ export async function runEval(options: EvalOptions): Promise<EvalReport> {
     llm,
     buildOrderTools(new InMemoryOrderQueries(options.orders ?? EVAL_ORDERS)),
     budget,
-    { now: () => EVAL_NOW },
+    {
+      now: () => EVAL_NOW,
+      timeoutMs: questionTimeoutMs(options.minIntervalMs ?? 0),
+    },
   );
   const usage = { input: 0, output: 0 };
   const results: CaseResult[] = [];
@@ -170,6 +185,14 @@ export async function runEval(options: EvalOptions): Promise<EvalReport> {
   };
 }
 
+/** What failed and what the model said, so a failure can be judged. */
+function detail(result: CaseResult): string {
+  const answer = result.answer ?? '';
+  return result.failures.length === 0
+    ? answer
+    : `${result.failures.join('; ')} -- ${answer}`;
+}
+
 function cell(text: string): string {
   return text.replace(/\|/g, '\\|').replace(/\s+/g, ' ').trim();
 }
@@ -200,10 +223,7 @@ export function formatReport(report: EvalReport): string {
           result.passed ? 'pass' : 'FAIL',
           result.outcome ?? '-',
           result.toolCalls.join(', ') || '-',
-          cell(
-            result.error ??
-              (result.failures.join('; ') || (result.answer ?? '')),
-          ),
+          cell(result.error ?? detail(result)),
         ].join(' | '),
       )
       .map((row) => `| ${row} |`),
