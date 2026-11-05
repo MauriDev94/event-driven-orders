@@ -344,7 +344,7 @@ cd services/order-service && pytest -q --cov=app
 | `inventory-service` | 38 | ~90% | 80 |
 | `notification-service` | 36 | ~96% | 85 |
 | `shared` | 44 unit + 3 forcing | — | — |
-| `assistant-service` | 195 | ~97% | 80 |
+| `assistant-service` | 213 | ~97% | 80 |
 
 > Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`. Los tests de `/health` también usan esa base: el fixture `client` reemplaza la sesión de `get_db_session`, así que nunca le pegan a la base configurada en `localhost`.
 
@@ -360,6 +360,32 @@ npm run lint && npm run typecheck && npm run format:check
 - **Integración contra servicios reales:** el repositorio Prisma corre contra Postgres (un `postgres:16-alpine` de testcontainers en local; en CI, el Postgres del job vía `TEST_DATABASE_URL`). La suite migra una base plantilla con el mismo `prisma migrate deploy` que corre el contenedor, y cada archivo de tests trabaja sobre una copia. El consumer se prueba contra un `rabbitmq:3.13-management` real: ACK, DLQ para un error permanente y `retry-5s` con `x-retry-count = 1` para uno transitorio. El rate limit y la caché del timeline corren contra un `redis:8.8-alpine` real (también con Redis caído), y las consultas de las herramientas contra Postgres.
 - **El agente sin red:** `AskAssistant` se prueba con un LLM de guion fijo (topes de turnos, de llamadas por turno y de tiempo, herramientas desconocidas, respuestas sin respaldo), y `GeminiLlmClient` con un `generateContent` falso. Ningún test necesita una clave.
 - **Contratos:** los esquemas zod parsean los fixtures de `test/fixtures/contracts/`, generados desde Pydantic. Si cambias un contrato en `shared/contracts`, regenéralos con `uv run --package shared python scripts/export_contract_fixtures.py`; CI corre el mismo script con `--check`.
+
+### Evaluación del asistente con el modelo real (`npm run eval`)
+
+Los tests prueban el loop y la verificación con un modelo de guion, pero no si Gemini responde bien. Para eso hay un set de evaluación en `services/assistant-service/eval/`. Usa el mismo `AskAssistant` del servicio, con sus herramientas y su verificación, sobre un catálogo fijo de seis pedidos en memoria, así que no necesita Docker ni el stack. Tiene 16 preguntas:
+
+- **Normales:** estado, motivo de rechazo, montos, productos, rangos de fecha, pendientes y una en inglés.
+- **Adversariales:** un pedido que no existe, el stock en bodega (que el asistente no conoce), una pregunta fuera de tema, una instrucción de mentir, una de inventar un pedido y los totales de varios pedidos.
+
+Cada respuesta se puntúa con reglas fijas, sin un segundo modelo que juzgue:
+- el `outcome` esperado;
+- los pedidos que debe y no debe citar;
+- lo que debe y no debe decir;
+- los montos, comparados por valor;
+- las herramientas que debió usar.
+
+```bash
+cd services/assistant-service
+npm run eval          # con fake: sin clave, sin red; sirve de línea base (6/16)
+npm run eval:gemini   # con Gemini: lee GEMINI_API_KEY y LLM_MODEL del .env de la raíz
+```
+
+`eval:gemini` deja 4,5 s entre llamadas para no pasar las 15 por minuto del plan gratis, y corta la corrida al primer 429 o a las 100 llamadas (`EVAL_MAX_MODEL_CALLS`). Una corrida usa unas 28 llamadas y tarda unos 3 minutos. No corre en CI, porque gasta cuota y el modelo no es determinista.
+
+**Resultado con `gemini-3.5-flash-lite` (2026-11-05): 14/16, con los 6 casos adversariales bien** ([reporte](services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite.md)):
+- **Los dos fallos son el mismo hallazgo:** en una respuesta en español, el modelo copia el estado tal como lo devuelve la herramienta (`confirmed`, `pending`).
+- **Las dos corridas anteriores del mismo día dieron 12/16.** En una, una pregunta no respondió a tiempo. En la otra, la respuesta copió una regla del prompt de sistema, que el caso del stock ahora detecta.
 
 ### Forcing de retry/DLQ contra RabbitMQ real (`shared/tests/integration/`)
 
