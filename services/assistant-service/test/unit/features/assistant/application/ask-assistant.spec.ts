@@ -129,6 +129,20 @@ describe('AskAssistant', () => {
     expect(request?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  // The eval found the model writing "está en estado `confirmed`" in Spanish
+  // answers: it copies the status as a code unless told to name it.
+  it('tells the model to name order statuses in the language of the question', async () => {
+    const llm = new ScriptedLlmClient([answer('hola')]);
+
+    await assistant(llm).execute('hola');
+
+    const system = llm.requests[0]?.system ?? '';
+    expect(system).toMatch(/statuses are codes/i);
+    expect(system).toMatch(/pending.*pendiente/i);
+    expect(system).toMatch(/confirmed.*confirmado/i);
+    expect(system).toMatch(/rejected.*rechazado/i);
+  });
+
   it('answers an unknown tool with an error and keeps going', async () => {
     const llm = new ScriptedLlmClient([
       callTools([{ name: 'delete_order', args: { order_id: orderId } }]),
