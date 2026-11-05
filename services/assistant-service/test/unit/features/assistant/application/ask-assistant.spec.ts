@@ -143,6 +143,18 @@ describe('AskAssistant', () => {
     expect(system).toMatch(/rejected.*rechazado/i);
   });
 
+  // With only the Spanish names in the prompt, the eval's English question got
+  // a Spanish answer.
+  it('keeps answers to English questions in English', async () => {
+    const llm = new ScriptedLlmClient([answer('hi')]);
+
+    await assistant(llm).execute('hi');
+
+    const system = llm.requests[0]?.system ?? '';
+    expect(system).toMatch(/question in English gets an answer in English/i);
+    expect(system).toMatch(/only when answering in Spanish/i);
+  });
+
   it('answers an unknown tool with an error and keeps going', async () => {
     const llm = new ScriptedLlmClient([
       callTools([{ name: 'delete_order', args: { order_id: orderId } }]),
