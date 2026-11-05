@@ -6,7 +6,11 @@ import {
 } from '../../../src/features/assistant/application/contracts/llm-client.js';
 import { FakeLlmClient } from '../../../src/features/assistant/infrastructure/fake-llm.client.js';
 import { EVAL_CASES, EVAL_ORDERS } from '../../../eval/cases.js';
-import { formatReport, runEval } from '../../../eval/runner.js';
+import {
+  formatReport,
+  questionTimeoutMs,
+  runEval,
+} from '../../../eval/runner.js';
 
 class QuotaSpentLlmClient extends LlmClient {
   readonly model = 'spent';
@@ -108,5 +112,24 @@ describe('formatReport', () => {
       `fake: ${report.passed}/${report.total} (${Math.round((100 * report.passed) / report.total)} %)`,
     );
     for (const evalCase of EVAL_CASES) expect(text).toContain(evalCase.id);
+  });
+
+  it('shows the answer of a failed case next to what failed', async () => {
+    const report = await runEval({ llm: new FakeLlmClient() });
+    const failed = report.results.find((result) => !result.passed);
+
+    const text = formatReport(report);
+
+    expect(failed?.answer).toBeDefined();
+    expect(text).toContain(
+      `${failed?.failures.join('; ')} -- ${failed?.answer}`,
+    );
+  });
+});
+
+describe('questionTimeoutMs', () => {
+  it("adds the throttle's waits of every turn to the service's 30 s", () => {
+    expect(questionTimeoutMs(0)).toBe(30_000);
+    expect(questionTimeoutMs(4_500)).toBe(30_000 + 5 * 4_500);
   });
 });
