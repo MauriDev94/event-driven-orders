@@ -344,7 +344,7 @@ cd services/order-service && pytest -q --cov=app
 | `inventory-service` | 38 | ~90% | 80 |
 | `notification-service` | 36 | ~96% | 85 |
 | `shared` | 44 unit + 3 forcing | — | — |
-| `assistant-service` | 213 | ~97% | 80 |
+| `assistant-service` | 215 | ~97% | 80 |
 
 > Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`. Los tests de `/health` también usan esa base: el fixture `client` reemplaza la sesión de `get_db_session`, así que nunca le pegan a la base configurada en `localhost`.
 
@@ -377,15 +377,15 @@ Cada respuesta se puntúa con reglas fijas, sin un segundo modelo que juzgue:
 
 ```bash
 cd services/assistant-service
-npm run eval          # con fake: sin clave, sin red; sirve de línea base (6/16)
+npm run eval          # con fake: sin clave, sin red; sirve de línea base (5/16)
 npm run eval:gemini   # con Gemini: lee GEMINI_API_KEY y LLM_MODEL del .env de la raíz
 ```
 
 `eval:gemini` deja 4,5 s entre llamadas para no pasar las 15 por minuto del plan gratis, y corta la corrida al primer 429 o a las 100 llamadas (`EVAL_MAX_MODEL_CALLS`). Una corrida usa unas 28 llamadas y tarda unos 3 minutos. No corre en CI, porque gasta cuota y el modelo no es determinista.
 
-**Resultado con `gemini-3.5-flash-lite` (2026-11-05): 14/16, con los 6 casos adversariales bien** ([reporte](services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite.md)):
-- **Los dos fallos son el mismo hallazgo:** en una respuesta en español, el modelo copia el estado tal como lo devuelve la herramienta (`confirmed`, `pending`).
-- **Las dos corridas anteriores del mismo día dieron 12/16.** En una, una pregunta no respondió a tiempo. En la otra, la respuesta copió una regla del prompt de sistema, que el caso del stock ahora detecta.
+**Resultado con `gemini-3.5-flash-lite` (2026-11-05): 16/16 y 15/16 en dos corridas** ([reporte](services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite-status-rule.md)):
+- **Antes daba 14/16** ([reporte](services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite.md)): en una respuesta en español, el modelo copiaba el estado tal como lo devuelve la herramienta (`confirmed`, `pending`). Una regla del prompt de sistema ahora pide nombrarlo en el idioma de la respuesta. Una primera versión de esa regla, con solo los nombres en español, hizo que la pregunta en inglés se respondiera en español; el set lo mostró, y la regla final lo corrige.
+- **El fallo que queda es el caso del stock:** a veces la respuesta copia la regla del prompt de sistema sobre el stock. Pasó en una de las dos corridas con la regla final y en tres de las seis de ese día.
 
 ### Forcing de retry/DLQ contra RabbitMQ real (`shared/tests/integration/`)
 
