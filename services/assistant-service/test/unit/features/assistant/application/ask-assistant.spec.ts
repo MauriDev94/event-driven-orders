@@ -155,6 +155,19 @@ describe('AskAssistant', () => {
     expect(system).toMatch(/only when answering in Spanish/i);
   });
 
+  // The eval caught the model answering the stock question with the stock
+  // rule itself: the rule read like a sentence to say.
+  it('tells the model the rules are private and to answer about stock in its own words', async () => {
+    const llm = new ScriptedLlmClient([answer('hola')]);
+
+    await assistant(llm).execute('hola');
+
+    const system = llm.requests[0]?.system ?? '';
+    expect(system).toMatch(/rules are private: never quote/i);
+    expect(system).toMatch(/no inventory data/i);
+    expect(system).toMatch(/in your own words/i);
+  });
+
   it('answers an unknown tool with an error and keeps going', async () => {
     const llm = new ScriptedLlmClient([
       callTools([{ name: 'delete_order', args: { order_id: orderId } }]),
@@ -226,6 +239,29 @@ describe('AskAssistant', () => {
     expect(result).toMatchObject({
       answer: NO_DATA_ANSWER,
       outcome: 'ungrounded',
+      citations: [],
+    });
+  });
+
+  // The eval caught the model answering the stock question with one of its
+  // rules. The answer copies a line of the prompt the model actually got.
+  it('replaces an answer that repeats the system prompt', async () => {
+    const lookUp = callTools([
+      { id: 'c1', name: 'get_order_timeline', args: { order_id: orderId } },
+    ]);
+    const llm = new ScriptedLlmClient([
+      lookUp,
+      async ({ system }) => {
+        const rule = system.split('\n').find((line) => line.length > 80);
+        return answer(`${rule} El pedido ${orderId} está rechazado.`);
+      },
+    ]);
+
+    const result = await assistant(llm).execute('cuanto stock queda?');
+
+    expect(result).toMatchObject({
+      answer: NO_DATA_ANSWER,
+      outcome: 'leaked',
       citations: [],
     });
   });

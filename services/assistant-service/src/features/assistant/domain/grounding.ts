@@ -6,10 +6,12 @@ import { amountsIn, skusIn } from './facts.js';
  * - `no_data`: the tools found nothing, or the model said nothing.
  * - `ungrounded`: the answer named an ID, an amount or a SKU no tool
  *   returned, so it was replaced.
+ * - `leaked`: the answer repeated part of the system prompt, so it was
+ *   replaced (`prompt-leak.ts`).
  * - `max_iterations`: the agent ran out of turns before answering.
  */
 export type AnswerOutcome =
-  'answered' | 'no_data' | 'ungrounded' | 'max_iterations';
+  'answered' | 'no_data' | 'ungrounded' | 'leaked' | 'max_iterations';
 
 export interface GroundedAnswer {
   text: string;

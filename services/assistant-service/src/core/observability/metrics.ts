@@ -44,7 +44,7 @@ export const EVENTS_RETRIED = counter(
   ['queue'],
 );
 
-// The assistant's own metrics. `outcome` is answered, no_data, ungrounded,
+// The assistant's own metrics. `outcome` is answered, no_data, ungrounded, leaked,
 // max_iterations, rate_limited or error; the token counter shows how much of
 // the model's free quota the questions use.
 export const ASSISTANT_QUESTIONS = counter(
