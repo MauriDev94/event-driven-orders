@@ -230,6 +230,29 @@ describe('AskAssistant', () => {
     });
   });
 
+  // The eval caught the model answering the stock question with one of its
+  // rules. The answer copies a line of the prompt the model actually got.
+  it('replaces an answer that repeats the system prompt', async () => {
+    const lookUp = callTools([
+      { id: 'c1', name: 'get_order_timeline', args: { order_id: orderId } },
+    ]);
+    const llm = new ScriptedLlmClient([
+      lookUp,
+      async ({ system }) => {
+        const rule = system.split('\n').find((line) => line.length > 80);
+        return answer(`${rule} El pedido ${orderId} está rechazado.`);
+      },
+    ]);
+
+    const result = await assistant(llm).execute('cuanto stock queda?');
+
+    expect(result).toMatchObject({
+      answer: NO_DATA_ANSWER,
+      outcome: 'leaked',
+      citations: [],
+    });
+  });
+
   it('checks the amounts and SKUs of the answer against what the tools returned', async () => {
     const lookUp = callTools([
       { id: 'c1', name: 'get_order_timeline', args: { order_id: orderId } },
