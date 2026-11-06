@@ -4,6 +4,7 @@ import {
   groundAnswer,
   NO_DATA_ANSWER,
 } from '../../domain/grounding.js';
+import { quotesInstructions } from '../../domain/prompt-leak.js';
 import {
   type ConversationMessage,
   type LlmClient,
@@ -54,7 +55,8 @@ function systemPrompt(now: Date): string {
  * The agent loop: ask the model, run the tools it calls, send the results
  * back, until it answers or a limit is hit. It lives here and not in the
  * adapter, so it doesn't depend on a provider and the fake tests all of it.
- * The tools are read-only, and the answer is grounded before it leaves.
+ * The tools are read-only, and the answer is checked before it leaves: it
+ * must not repeat the system prompt, and its facts must be grounded.
  * Each model call is taken from the daily budget first (ADR-0024).
  */
 export class AskAssistant {
@@ -112,6 +114,13 @@ export class AskAssistant {
       usage.input += spent.input;
       usage.output += spent.output;
       if (message.toolCalls.length === 0) {
+        if (quotesInstructions(message.text, system)) {
+          return result({
+            text: NO_DATA_ANSWER,
+            outcome: 'leaked',
+            citations: [],
+          });
+        }
         return result(groundAnswer(message.text, question, evidence));
       }
 
