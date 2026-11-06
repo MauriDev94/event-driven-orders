@@ -287,7 +287,8 @@ curl -X POST http://localhost:8004/v1/assistant/ask \
 }
 ```
 
-- **Citas verificadas.** Las arma el servidor con lo que devolvieron las herramientas, no con lo que dice el modelo. Si la respuesta nombra un ID, un monto o un SKU que ninguna herramienta devolvió (ni traía la pregunta), se reemplaza por "No tengo datos suficientes para responder eso." y `outcome` vale `ungrounded`. Los otros valores son `answered`, `no_data` y `max_iterations`. Los montos se reconocen escritos de varias formas (`$1.250`, `1.250,00`, `1250.0`) y se comparan por valor; los conteos, las cantidades y las fechas no se revisan. Una suma que calcule el modelo tampoco está en la evidencia, así que el prompt le pide copiar los montos tal como vienen.
+- **Citas verificadas.** Las arma el servidor con lo que devolvieron las herramientas, no con lo que dice el modelo. Si la respuesta nombra un ID, un monto o un SKU que ninguna herramienta devolvió (ni traía la pregunta), se reemplaza por "No tengo datos suficientes para responder eso." y `outcome` vale `ungrounded`. Los otros valores son `answered`, `no_data`, `leaked` (abajo) y `max_iterations`. Los montos se reconocen escritos de varias formas (`$1.250`, `1.250,00`, `1250.0`) y se comparan por valor; los conteos, las cantidades y las fechas no se revisan. Una suma que calcule el modelo tampoco está en la evidencia, así que el prompt le pide copiar los montos tal como vienen.
+- **Sin repetir el prompt de sistema.** Si la respuesta copia 8 palabras seguidas del prompt (sin contar mayúsculas ni puntuación), se reemplaza por la misma frase y `outcome` vale `leaked`. Un tramo tan largo no aparece por casualidad en una respuesta normal. Una regla traducida o dicha con otras palabras pasa: eso no se puede detectar con una regla fija, así que el prompt también pide no citar las reglas.
 - **Sin texto libre en los ids.** Lo que leen las herramientas sale de los pedidos, y `order-service` solo acepta en `customer_id` y `product_id` ids de hasta 36 caracteres, con letras, dígitos, `.`, `_` y `-`; cualquier otra cosa da 422. Así un pedido no puede colar instrucciones en lo que lee el modelo.
 - **`fake` por defecto.** Compose corre el asistente con `LLM_PROVIDER=fake`, un modelo de reglas fijas que no necesita clave: con un ID en la pregunta pide su timeline; sin ID, lista los últimos pedidos. Para usar Gemini, crea una clave gratis en [Google AI Studio](https://aistudio.google.com/apikey), ponla en `GEMINI_API_KEY` de tu `.env` junto con `LLM_PROVIDER=gemini` y recrea el servicio (`docker compose up -d assistant-service`). El modelo por defecto es `gemini-3.5-flash-lite` (`LLM_MODEL`): en el plan gratis permite 500 solicitudes por día, y `gemini-3.8-flash`, solo 20. En el plan gratis, Google puede usar lo que recibe para mejorar sus productos: mándale solo pedidos de prueba.
 - **Rate limit en Redis.** 5 preguntas por minuto por IP (`ASK_RATE_LIMIT_PER_MINUTE`), para cuidar la cuota gratis. Pasado el límite, responde 429 con `Retry-After`. Como la cuota diaria de Google es por proyecto y no por IP, hay además un tope global de 400 llamadas al modelo por día (`LLM_DAILY_CALL_LIMIT`), contado en Redis con la fecha de la hora del Pacífico, que es cuando Gemini reinicia su cuota; pasado el tope, la respuesta es 503 ([ADR-0024](docs/adr/0024-tope-diario-de-llamadas-al-modelo.md)). Si Redis no responde, la pregunta recibe 503 (falla cerrado), pero el timeline sigue andando ([ADR-0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md)).
@@ -344,7 +345,7 @@ cd services/order-service && pytest -q --cov=app
 | `inventory-service` | 38 | ~90% | 80 |
 | `notification-service` | 36 | ~96% | 85 |
 | `shared` | 44 unit + 3 forcing | — | — |
-| `assistant-service` | 215 | ~97% | 80 |
+| `assistant-service` | 222 | ~97% | 80 |
 
 > Local: se lanza automáticamente un `PostgresContainer("postgres:16-alpine")` (requiere Docker). CI: el job `tests-db` levanta un service container Postgres 16 y el conftest detecta `CI=true`. Los tests de `/health` también usan esa base: el fixture `client` reemplaza la sesión de `get_db_session`, así que nunca le pegan a la base configurada en `localhost`.
 
@@ -383,9 +384,9 @@ npm run eval:gemini   # con Gemini: lee GEMINI_API_KEY y LLM_MODEL del .env de l
 
 `eval:gemini` deja 4,5 s entre llamadas para no pasar las 15 por minuto del plan gratis, y corta la corrida al primer 429 o a las 100 llamadas (`EVAL_MAX_MODEL_CALLS`). Una corrida usa unas 28 llamadas y tarda unos 3 minutos. No corre en CI, porque gasta cuota y el modelo no es determinista.
 
-**Resultado con `gemini-3.5-flash-lite` (2026-11-05): 16/16 y 15/16 en dos corridas** ([reporte](services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite-status-rule.md)):
-- **Antes daba 14/16** ([reporte](services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite.md)): en una respuesta en español, el modelo copiaba el estado tal como lo devuelve la herramienta (`confirmed`, `pending`). Una regla del prompt de sistema ahora pide nombrarlo en el idioma de la respuesta. Una primera versión de esa regla, con solo los nombres en español, hizo que la pregunta en inglés se respondiera en español; el set lo mostró, y la regla final lo corrige.
-- **El fallo que queda es el caso del stock:** a veces la respuesta copia la regla del prompt de sistema sobre el stock. Pasó en una de las dos corridas con la regla final y en tres de las seis de ese día.
+**Resultado con `gemini-3.5-flash-lite` (2026-11-05): 16/16 en tres corridas seguidas, con los 6 casos adversariales bien** ([reporte](services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite-prompt-leak.md)). El set empezó en 14/16, y cada arreglo se midió con él:
+- **Estados en inglés** ([reporte](services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite.md)): en una respuesta en español, el modelo copiaba el estado tal como lo devuelve la herramienta (`confirmed`, `pending`). Una regla del prompt de sistema ahora pide nombrarlo en el idioma de la respuesta. Una primera versión de esa regla, con solo los nombres en español, hizo que la pregunta en inglés se respondiera en español; el set lo mostró, y la regla final lo corrige ([reporte](services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite-status-rule.md)).
+- **Filtración del prompt:** en la pregunta por el stock, la respuesta copiaba en inglés la regla del prompt sobre el stock, en tres de seis corridas. Ahora el servidor la reemplaza (outcome `leaked`), y el prompt pide no citar las reglas. El caso del stock exige `no_data`, así que el set sigue contando una filtración aunque no llegue al usuario.
 
 ### Forcing de retry/DLQ contra RabbitMQ real (`shared/tests/integration/`)
 
@@ -541,7 +542,7 @@ El sistema expone el **pilar de métricas** como complemento al logging JSON est
 | `edo_events_dlq_total` | Counter | `queue` | Eventos enviados a DLQ |
 | `edo_events_retried_total` | Counter | `queue` | Reintentos de eventos |
 | `edo_event_processing_seconds` | Histogram | `service` | Latencia de procesamiento |
-| `edo_assistant_questions_total` | Counter | `outcome` | Preguntas al asistente: `answered`, `no_data`, `ungrounded`, `max_iterations`, `rate_limited` o `error` |
+| `edo_assistant_questions_total` | Counter | `outcome` | Preguntas al asistente: `answered`, `no_data`, `ungrounded`, `leaked`, `max_iterations`, `rate_limited` o `error` |
 | `edo_assistant_tool_calls_total` | Counter | `tool` | Llamadas a herramientas pedidas por el modelo (`unknown` si inventa una) |
 | `edo_assistant_llm_tokens_total` | Counter | `direction` | Tokens de entrada y salida informados por el modelo, para seguir la cuota gratis |
 
