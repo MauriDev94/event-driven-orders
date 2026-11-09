@@ -82,4 +82,93 @@ describe('orderEventSchema', () => {
       }),
     ).toThrow(ZodError);
   });
+
+  // Bounds that mirror order-service's request validation, so a visitor's
+  // text can't grow the read model, and anything outside them is a ZodError
+  // (a permanent failure: the message goes to the DLQ).
+  describe('bounds', () => {
+    const created = () => fixture('order.created');
+    const item = { product_id: 'SKU-001', quantity: 1, unit_price: '1.00' };
+
+    it.each([
+      ['event_id', 'order.created'],
+      ['order_id', 'order.created'],
+      ['customer_id', 'order.created'],
+      ['order_id', 'stock.reserved'],
+      ['customer_id', 'order.confirmed'],
+    ])('accepts a %s of 36 characters in %s', (field, name) => {
+      const id = 'a'.repeat(36);
+      expect(() =>
+        orderEventSchema.parse({ ...fixture(name), [field]: id }),
+      ).not.toThrow();
+    });
+
+    it.each([
+      ['event_id', 'order.created'],
+      ['order_id', 'order.created'],
+      ['customer_id', 'order.created'],
+      ['order_id', 'stock.reserved'],
+      ['customer_id', 'order.confirmed'],
+      ['customer_id', 'order.rejected'],
+    ])('rejects a %s of 37 characters in %s', (field, name) => {
+      expect(() =>
+        orderEventSchema.parse({ ...fixture(name), [field]: 'a'.repeat(37) }),
+      ).toThrow(ZodError);
+    });
+
+    it.each(['has space', '-starts-with-dash', '.dot', 'ñandú', 'a/b', 'x\ny'])(
+      'rejects the id %j, like order-service',
+      (id) => {
+        expect(() =>
+          orderEventSchema.parse({ ...created(), customer_id: id }),
+        ).toThrow(ZodError);
+        expect(() =>
+          orderEventSchema.parse({
+            ...created(),
+            items: [{ ...item, product_id: id }],
+          }),
+        ).toThrow(ZodError);
+      },
+    );
+
+    it('accepts the ids order-service accepts', () => {
+      expect(() =>
+        orderEventSchema.parse({
+          ...created(),
+          customer_id: 'c1.A_b-9',
+          items: [{ ...item, product_id: 'SKU-001' }],
+        }),
+      ).not.toThrow();
+    });
+
+    it('bounds the product id of an item to 36 characters', () => {
+      const items = [{ ...item, product_id: 'p'.repeat(37) }];
+      expect(() => orderEventSchema.parse({ ...created(), items })).toThrow(
+        ZodError,
+      );
+    });
+
+    it.each(['stock.rejected', 'order.rejected'])(
+      'bounds the reason of %s to 200 characters',
+      (name) => {
+        const event = fixture(name);
+        expect(() =>
+          orderEventSchema.parse({ ...event, reason: 'r'.repeat(200) }),
+        ).not.toThrow();
+        expect(() =>
+          orderEventSchema.parse({ ...event, reason: 'r'.repeat(201) }),
+        ).toThrow(ZodError);
+      },
+    );
+
+    it('bounds the items to 50, the lines order-service accepts', () => {
+      const items = (n: number) => Array.from({ length: n }, () => item);
+      expect(() =>
+        orderEventSchema.parse({ ...created(), items: items(50) }),
+      ).not.toThrow();
+      expect(() =>
+        orderEventSchema.parse({ ...created(), items: items(51) }),
+      ).toThrow(ZodError);
+    });
+  });
 });

@@ -22,6 +22,7 @@ import {
 
 const SKU_005_REASON = 'insufficient stock for product SKU-005';
 const SKU_004_REASON = 'insufficient stock for product SKU-004';
+const LIMITS = { groups: 10, productIdsPerGroup: 20 };
 
 // The queries behind the assistant's tools, against real Postgres (ADR-0008):
 // the jsonb containment and the date bounds are Postgres semantics.
@@ -208,21 +209,24 @@ describe('ReadModelOrderQueries', () => {
       );
       await confirmedOrder('2026-10-31T13:00:00.000Z');
 
-      const summary = await queries.rejectionSummary({});
+      const summary = await queries.rejectionSummary({}, LIMITS);
 
       expect(summary).toEqual({
         totalRejected: 3,
+        totalGroups: 2,
         groups: [
           {
             reason: SKU_005_REASON,
             count: 2,
             productIds: ['SKU-001', 'SKU-005'],
+            productTotal: 2,
             orderIds: [b, a],
           },
           {
             reason: SKU_004_REASON,
             count: 1,
             productIds: ['SKU-004'],
+            productTotal: 1,
             orderIds: [c],
           },
         ],
@@ -256,7 +260,7 @@ describe('ReadModelOrderQueries', () => {
       const second = rejected(SKU_004_REASON, 300, recent, 'SKU-004');
       await prisma.orderView.createMany({ data: [...first, ...second] });
 
-      const summary = await queries.rejectionSummary({});
+      const summary = await queries.rejectionSummary({}, LIMITS);
 
       expect(summary.totalRejected).toBe(1_400);
       expect(
@@ -288,7 +292,7 @@ describe('ReadModelOrderQueries', () => {
       const rows = [row(null), row(null), row('unknown')];
       await prisma.orderView.createMany({ data: rows });
 
-      const summary = await queries.rejectionSummary({});
+      const summary = await queries.rejectionSummary({}, LIMITS);
 
       expect(summary.totalRejected).toBe(3);
       expect(summary.groups).toHaveLength(1);
@@ -310,10 +314,13 @@ describe('ReadModelOrderQueries', () => {
       const outside = row('2026-10-30T10:00:00.000Z');
       await prisma.orderView.createMany({ data: [inside, outside] });
 
-      const summary = await queries.rejectionSummary({
-        from: new Date('2026-10-31T00:00:00.000Z'),
-        until: new Date('2026-11-01T00:00:00.000Z'),
-      });
+      const summary = await queries.rejectionSummary(
+        {
+          from: new Date('2026-10-31T00:00:00.000Z'),
+          until: new Date('2026-11-01T00:00:00.000Z'),
+        },
+        LIMITS,
+      );
 
       expect(summary.totalRejected).toBe(1);
       expect(summary.groups[0]?.orderIds).toEqual([inside.orderId]);
@@ -329,12 +336,121 @@ describe('ReadModelOrderQueries', () => {
         ['SKU-005'],
       );
 
-      const summary = await queries.rejectionSummary({
-        from: new Date('2026-10-31T00:00:00.000Z'),
-      });
+      const summary = await queries.rejectionSummary(
+        {
+          from: new Date('2026-10-31T00:00:00.000Z'),
+        },
+        LIMITS,
+      );
 
       expect(summary.totalRejected).toBe(1);
       expect(summary.groups[0]?.orderIds).toEqual([today]);
+    });
+
+    describe('caps', () => {
+      /** `count` rejected orders, each with its own invented SKU in the reason. */
+      function distinctReasons(count: number, at: Date) {
+        return Array.from({ length: count }, (_, i) => ({
+          orderId: randomUUID(),
+          status: 'rejected' as const,
+          rejectionReason: `insufficient stock for product SKU-${i}`,
+          items: [{ product_id: `SKU-${i}`, quantity: 1, unit_price: '1.00' }],
+          createdAt: at,
+          lastEventAt: at,
+        }));
+      }
+
+      it('returns the largest groups up to the cap, with exact totals', async () => {
+        const at = new Date('2026-10-31T10:00:00.000Z');
+        // 30 groups of one order, plus two bigger ones that must survive the cut.
+        const big = (reason: string, n: number) =>
+          Array.from({ length: n }, () => ({
+            orderId: randomUUID(),
+            status: 'rejected' as const,
+            rejectionReason: reason,
+            createdAt: at,
+            lastEventAt: at,
+          }));
+        await prisma.orderView.createMany({
+          data: [
+            ...distinctReasons(30, at),
+            ...big('big reason', 7),
+            ...big('bigger reason', 9),
+          ],
+        });
+
+        const summary = await queries.rejectionSummary(
+          {},
+          {
+            groups: 5,
+            productIdsPerGroup: 20,
+          },
+        );
+
+        expect(summary.totalRejected).toBe(46);
+        expect(summary.totalGroups).toBe(32);
+        expect(summary.groups).toHaveLength(5);
+        expect(
+          summary.groups.slice(0, 2).map((g) => [g.reason, g.count]),
+        ).toEqual([
+          ['bigger reason', 9],
+          ['big reason', 7],
+        ]);
+        // Ties on the count break by reason, so the cut is deterministic.
+        expect(summary.groups.slice(2).map((g) => g.reason)).toEqual([
+          'insufficient stock for product SKU-0',
+          'insufficient stock for product SKU-1',
+          'insufficient stock for product SKU-10',
+        ]);
+      });
+
+      it('reports every group as total when none is cut', async () => {
+        const at = new Date('2026-10-31T10:00:00.000Z');
+        await prisma.orderView.createMany({ data: distinctReasons(3, at) });
+
+        const summary = await queries.rejectionSummary({}, LIMITS);
+
+        expect(summary.totalGroups).toBe(3);
+        expect(summary.groups).toHaveLength(3);
+      });
+
+      it('returns the product ids up to the cap and counts them all', async () => {
+        const at = new Date('2026-10-31T10:00:00.000Z');
+        const items = Array.from({ length: 40 }, (_, i) => ({
+          product_id: `SKU-${String(i).padStart(2, '0')}`,
+          quantity: 1,
+          unit_price: '1.00',
+        }));
+        await prisma.orderView.createMany({
+          data: [
+            {
+              orderId: randomUUID(),
+              status: 'rejected' as const,
+              rejectionReason: SKU_005_REASON,
+              items,
+              createdAt: at,
+              lastEventAt: at,
+            },
+          ],
+        });
+
+        const summary = await queries.rejectionSummary(
+          {},
+          {
+            groups: 10,
+            productIdsPerGroup: 5,
+          },
+        );
+
+        expect(summary.groups[0]?.productIds).toEqual([
+          'SKU-00',
+          'SKU-01',
+          'SKU-02',
+          'SKU-03',
+          'SKU-04',
+        ]);
+        expect(summary.groups[0]?.productTotal).toBe(40);
+      });
     });
   });
 });
