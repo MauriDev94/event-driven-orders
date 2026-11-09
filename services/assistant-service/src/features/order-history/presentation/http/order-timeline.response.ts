@@ -1,4 +1,5 @@
 import type { OrderTimeline } from '../../application/contracts/order-history.repository.js';
+import { reasonOf } from '../../application/mappers/event-reason.js';
 
 /** snake_case, like the other services' APIs. */
 export interface OrderTimelineResponse {
@@ -46,15 +47,8 @@ export function toTimelineResponse({
         event_type: event.eventType,
         occurred_at: event.occurredAt.toISOString(),
         correlation_id: event.correlationId,
-        ...(reason === undefined ? {} : { reason }),
+        ...(reason === null ? {} : { reason }),
       };
     }),
   };
-}
-
-function reasonOf(payload: unknown): string | undefined {
-  if (typeof payload === 'object' && payload !== null && 'reason' in payload) {
-    return typeof payload.reason === 'string' ? payload.reason : undefined;
-  }
-  return undefined;
 }
