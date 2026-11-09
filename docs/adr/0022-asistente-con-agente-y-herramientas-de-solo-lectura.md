@@ -1,6 +1,6 @@
 # ADR-0022 — Asistente con un agente y herramientas de solo lectura, sobre Gemini
 
-**Estado:** Aceptada · **Fecha:** 2026-10-31 · **Ámbito:** `assistant-service` (`POST /v1/assistant/ask`)
+**Estado:** Aceptada · Parcialmente reemplazada por [ADR-0025](0025-verificacion-de-hechos-y-filtracion-del-prompt.md) · **Fecha:** 2026-10-31 · **Ámbito:** `assistant-service` (`POST /v1/assistant/ask`)
 
 ## Contexto
 

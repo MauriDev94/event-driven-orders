@@ -11,14 +11,15 @@
 >
 > **Cambios en las fases C y D**, registrados en [ADR-0022](adr/0022-asistente-con-agente-y-herramientas-de-solo-lectura.md) y [ADR-0023](adr/0023-redis-rate-limit-y-cache-del-timeline.md):
 > - Hay una cita por pedido, con todos sus eventos: `citations: [{ order_id, event_ids }]` en vez de `{ order_id, event_id }`.
-> - La respuesta suma `outcome` (`answered`, `no_data`, `ungrounded` o `max_iterations`); `max_iterations` también es una etiqueta de `edo_assistant_questions_total`.
-> - La verificación mira los IDs de pedidos y de eventos, y cuenta como conocidos los que venían en la pregunta.
+> - La respuesta suma `outcome` (`answered`, `no_data`, `ungrounded`, `leaked` o `max_iterations`); todos son etiquetas de `edo_assistant_questions_total`.
+> - La verificación mira los IDs de pedidos y de eventos, y cuenta como conocidos los que venían en la pregunta. Después sumó montos y SKU, y la detección de un prompt repetido (ver abajo).
 > - Además de las 5 iteraciones, hay un tope de 5 llamadas a herramientas por turno y un timeout de 30 s por pregunta.
 > - El dominio tiene `Evidence` y `groundAnswer` en vez de una entidad `Answer`. Los tests unitarios de `AskAssistant` usan un LLM con un guion por test (`ScriptedLlmClient`); `FakeLlmClient` queda para Compose, el e2e de Nest y `make e2e`.
 > - La caché del timeline no se invalida con un simple `DEL`: un contador de generación por pedido evita que una lectura concurrente guarde el estado viejo.
 > - El puerto `TimelineCache` y su adaptador viven en `order-history`, y `GetOrderTimeline` lo comparten el endpoint y la herramienta. Por eso el adaptador de `OrderQueries` se llama `ReadModelOrderQueries`: el timeline lo pide al use case y no a Prisma.
-> - El modelo por defecto es `gemini-3.5-flash-lite`: en el plan gratis, `gemini-3.8-flash` permite solo 20 solicitudes por día (unas 10 preguntas) y Flash Lite, 500. El rate limit por IP tampoco protege esa cuota diaria, que es por proyecto; un tope global queda para el deploy.
-> - El límite es de 5 preguntas por minuto (`ASK_RATE_LIMIT_PER_MINUTE`) y `TRUST_PROXY` decide de quién se acepta `X-Forwarded-For` (`uniquelocal` detrás de Caddy).
+> - El modelo por defecto es `gemini-3.5-flash-lite`: en el plan gratis, `gemini-3.8-flash` permite solo 20 solicitudes por día (unas 10 preguntas) y Flash Lite, 500. El rate limit por IP tampoco protege esa cuota diaria, que es por proyecto; el tope global de llamadas al modelo se hizo después ([ADR-0024](adr/0024-tope-diario-de-llamadas-al-modelo.md)).
+> - Después de la fase D, la revisión del 2026-11-01 sumó tres cambios al asistente: la verificación de montos y SKU (issue #70) y el outcome `leaked` (issue #76), registrados en [ADR-0025](adr/0025-verificacion-de-hechos-y-filtracion-del-prompt.md), y el tope diario de llamadas al modelo ([ADR-0024](adr/0024-tope-diario-de-llamadas-al-modelo.md)). El set de evaluación (`eval/`) mide el resultado.
+- El límite es de 5 preguntas por minuto (`ASK_RATE_LIMIT_PER_MINUTE`) y `TRUST_PROXY` decide de quién se acepta `X-Forwarded-For` (`uniquelocal` detrás de Caddy).
 
 Un cuarto microservicio, escrito en **TypeScript con NestJS**. Se suma al flujo **solo por eventos**, como los otros tres, y no les cambia nada.
 
@@ -124,7 +125,8 @@ POST /v1/assistant/ask ──▶ rate limit (Redis) ──▶ AskAssistant ─�
 **Respuesta:** `{ answer, citations: [{ order_id, event_id }], tool_calls, model }`. Las citas se arman en el servidor, con lo que devolvieron las herramientas, no con lo que dice el modelo.
 
 **Límites y verificación**
-- **IDs verificados.** Si la respuesta menciona un ID de pedido que ninguna herramienta devolvió, se marca `ungrounded` y se reemplaza por "no tengo datos suficientes para responder eso".
+- **Hechos verificados.** Si la respuesta menciona un ID, un monto o un SKU que ninguna herramienta devolvió (ni traía la pregunta), se marca `ungrounded` y se reemplaza por "no tengo datos suficientes para responder eso". Fechas, conteos y motivos en texto libre no se revisan ([ADR-0025](adr/0025-verificacion-de-hechos-y-filtracion-del-prompt.md)).
+- **Prompt no repetido.** Si la respuesta copia 8 palabras seguidas del prompt de sistema, se reemplaza por la misma frase y se marca `leaked` (ADR-0025).
 - **System prompt:**
   - Responder solo con lo que devuelvan las herramientas.
   - Decirlo cuando no hay datos.
@@ -165,7 +167,7 @@ El puerto es `8004:8000`. Nest escucha en 8000, igual que los demás, para que P
 - **Logs JSON con `nestjs-pino`**, con `correlation_id` ([ADR-0012](adr/0012-logging-json-y-correlation-id.md)). Se toma del body del evento o del header `X-Correlation-ID`.
 - **Métricas con `prom-client`.**
   - Usa los mismos nombres y etiquetas que `shared.observability.metrics` (`edo_events_processed_total`, `edo_events_dlq_total`, `edo_events_retried_total`, `edo_event_processing_seconds`), así los paneles de Grafana lo muestran sin cambios.
-  - `edo_assistant_questions_total{outcome}` cuenta las preguntas por resultado: `answered`, `no_data`, `ungrounded`, `rate_limited` o `error`.
+  - `edo_assistant_questions_total{outcome}` cuenta las preguntas por resultado: `answered`, `no_data`, `ungrounded`, `leaked`, `max_iterations`, `rate_limited` o `error`.
   - `edo_assistant_tool_calls_total{tool}` cuenta las llamadas a herramientas.
   - `edo_assistant_llm_tokens_total{direction}` cuenta los tokens de entrada y salida que reporta la API, para ver cuánta cuota se consume.
 - **Prometheus:** un job nuevo en `infra/prometheus/`.
@@ -237,7 +239,7 @@ El servicio queda fuera del workspace de uv: tiene su propio `package.json` y `p
 - Servicios nuevos: `postgres-assistant`, `redis` y `assistant-service`.
 - Variables nuevas: `ASSISTANT_DB_*`, `REDIS_URL`, `LLM_PROVIDER`, `LLM_MODEL` y `GEMINI_API_KEY`.
 - Ninguna contraseña lleva valor por defecto (ver el punto de secretos del paso 1 del [roadmap](roadmap.md)).
-- La ruta de Caddy para producción queda para cuando se haga el deploy (paso 4 del roadmap).
+- La ruta de Caddy para producción ya existe (`deploy/Caddyfile`); falta el deploy (paso 4 del roadmap).
 
 ## ADRs
 
@@ -267,11 +269,11 @@ Si falta tiempo: A, B y C ya forman algo demostrable, y D puede ir después.
 
 ## Después
 
-- **Set de evaluación** (`npm run eval`): unas diez preguntas sobre datos sembrados, que revisan citas y hechos esperados. Se corre a mano, porque consume la cuota del plan gratis.
+- ~~**Set de evaluación**~~ (hecho): `npm run eval` y `npm run eval:gemini`, con 16 casos en `eval/`. Se corre a mano con Gemini, porque consume la cuota del plan gratis.
 - **Un proveedor de pago** (por ejemplo, Claude Haiku), solo si algún día hace falta. El puerto `LlmClient` ya lo permite.
 - **Respuestas en streaming** (SSE) y conversación de varios turnos.
 - **Forcing test completo contra RabbitMQ real**: el test de integración del consumer ya verifica que un fallo permanente va a la DLQ y uno transitorio llega a `retry-5s` con `x-retry-count = 1`; falta esperar el TTL y ver que vuelve a la cola principal.
-- **Ruta en Caddy** y deploy junto con el paso 4 del roadmap. El endpoint del asistente se publica solo cuando el rate limit de la fase D esté andando, para no exponer la cuota gratis de Gemini.
+- **Deploy** junto con el paso 4 del roadmap (la ruta `/v1/assistant/*` de Caddy ya existe en `deploy/Caddyfile`). El endpoint del asistente se publica solo cuando el rate limit de la fase D esté andando, para no exponer la cuota gratis de Gemini.
 - **Pagos** (paso 6 del roadmap): proyectar `payment.*` y `stock.released`, y sumar el estado de pago a `OrderView`. Como las routing keys están enlazadas de forma explícita, los eventos nuevos no llegan solos.
 
 ## Riesgos
