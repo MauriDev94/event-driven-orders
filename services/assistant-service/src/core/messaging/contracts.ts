@@ -6,6 +6,12 @@
  * fixtures exported from the Pydantic models, so a drift fails the tests.
  *
  * Unknown fields are dropped, like Pydantic's default.
+ *
+ * Unlike the Pydantic models, the ids, the reason and the items are bounded
+ * (the same rules as order-service's request validation), so text a visitor
+ * controls, or someone publishing straight to the broker, can't grow the read
+ * model or what the assistant sends to the model. A violation is a ZodError,
+ * which goes to the DLQ.
  */
 import { z } from 'zod';
 
@@ -13,15 +19,25 @@ const decimal = z
   .string()
   .regex(/^\d+(\.\d+)?$/, 'expected a non-negative decimal string');
 
+/** order-service's `ID_PATTERN` and `ID_MAX_LENGTH`: plain identifiers, never free text. */
+const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const ID_MAX_LENGTH = 36;
+const id = z.string().min(1).max(ID_MAX_LENGTH).regex(ID_PATTERN);
+
+/** The longest reason inventory writes is ~67 characters; this is 3x that. */
+const REASON_MAX_LENGTH = 200;
+/** order-service's `MAX_ORDER_LINES`: an accepted order is never dead-lettered. */
+const MAX_ITEMS = 50;
+
 const baseEvent = {
-  event_id: z.string().min(1),
+  event_id: id,
   occurred_at: z.iso.datetime({ offset: true }),
   correlation_id: z.string(),
-  order_id: z.string().min(1),
+  order_id: id,
 };
 
 export const orderItemSchema = z.object({
-  product_id: z.string(),
+  product_id: id,
   quantity: z.number().int().positive(),
   unit_price: decimal,
 });
@@ -29,8 +45,8 @@ export const orderItemSchema = z.object({
 export const orderCreatedSchema = z.object({
   ...baseEvent,
   event_type: z.literal('order.created'),
-  customer_id: z.string(),
-  items: z.array(orderItemSchema),
+  customer_id: id,
+  items: z.array(orderItemSchema).max(MAX_ITEMS),
   total_amount: decimal,
 });
 
@@ -42,20 +58,20 @@ export const stockReservedSchema = z.object({
 export const stockRejectedSchema = z.object({
   ...baseEvent,
   event_type: z.literal('stock.rejected'),
-  reason: z.string(),
+  reason: z.string().max(REASON_MAX_LENGTH),
 });
 
 export const orderConfirmedSchema = z.object({
   ...baseEvent,
   event_type: z.literal('order.confirmed'),
-  customer_id: z.string(),
+  customer_id: id,
 });
 
 export const orderRejectedSchema = z.object({
   ...baseEvent,
   event_type: z.literal('order.rejected'),
-  customer_id: z.string(),
-  reason: z.string(),
+  customer_id: id,
+  reason: z.string().max(REASON_MAX_LENGTH),
 });
 
 export const orderEventSchema = z.discriminatedUnion('event_type', [

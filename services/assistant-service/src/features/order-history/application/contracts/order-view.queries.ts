@@ -30,18 +30,31 @@ export interface OrderViewSearch extends OrderViewScope {
   limit: number;
 }
 
+/** How much of the rejection stats a query returns; the totals stay exact. */
+export interface RejectionLimits {
+  /** Groups returned, the largest first. */
+  groups: number;
+  /** Product ids returned per group, in alphabetical order. */
+  productIdsPerGroup: number;
+}
+
 export interface RejectionGroup {
   reason: string;
   /** Exact: counted in the database over every rejected order in the range. */
   count: number;
   /** Read from the most recent rejected orders of the group, so it can be partial. */
   productIds: string[];
+  /** Distinct products over the 1,000 most recent orders of the group (`ROWS_PER_GROUP` in the Prisma query), not over the whole group; `productIds` holds the first ones. */
+  productTotal: number;
   orderIds: string[];
 }
 
 export interface RejectionStats {
+  /** Exact: every rejected order in the range, whatever the group cap. */
   totalRejected: number;
-  /** Largest group first. */
+  /** Exact: every distinct reason in the range, whatever the group cap. */
+  totalGroups: number;
+  /** Largest group first, ties by reason, at most `limits.groups`. */
   groups: RejectionGroup[];
 }
 
@@ -54,5 +67,8 @@ export abstract class OrderViewQueries {
   abstract search(filters: OrderViewSearch): Promise<OrderViewSummary[]>;
 
   /** Rejected orders grouped by reason (`unknown` when none was recorded). */
-  abstract rejectionStats(range: OrderViewScope): Promise<RejectionStats>;
+  abstract rejectionStats(
+    range: OrderViewScope,
+    limits: RejectionLimits,
+  ): Promise<RejectionStats>;
 }

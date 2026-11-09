@@ -10,6 +10,7 @@ import {
   type OrderViewSearch,
   type OrderViewSummary,
   type RejectionGroup,
+  type RejectionLimits,
   type RejectionStats,
 } from '../application/contracts/order-view.queries.js';
 
@@ -40,11 +41,18 @@ export class PrismaOrderViewQueries extends OrderViewQueries {
     return rows.map(toSummary);
   }
 
-  async rejectionStats(scope: OrderViewScope): Promise<RejectionStats> {
+  async rejectionStats(
+    scope: OrderViewScope,
+    limits: RejectionLimits,
+  ): Promise<RejectionStats> {
     // One round trip, whatever the number of reasons: reasons embed a SKU that
     // visitors choose, so a query per group would let them drain the pool.
+    // The same reason is why the groups and the product ids are capped here,
+    // in SQL, and not after reading them: the rows returned never grow with
+    // the data. The totals are computed before the cap, so they stay exact.
     // The date filter is `createdIn` in SQL: the creation date, or the first
-    // event's while `order.created` hasn't arrived.
+    // event's while `order.created` hasn't arrived. Ordering uses COLLATE "C"
+    // so the cut is the same on any database and matches JS's default sort.
     const from = scope.from ?? null;
     const until = scope.until ?? null;
     const rows = await this.prisma.$queryRaw<RejectionRow[]>`
@@ -67,15 +75,6 @@ export class PrismaOrderViewQueries extends OrderViewQueries {
           AND (${until}::timestamptz IS NULL
                OR COALESCE(created_at, last_event_at) < ${until}::timestamptz)
       ),
-      products AS (
-        SELECT r.reason, item ->> 'product_id' AS product_id
-        FROM ranked r
-        CROSS JOIN LATERAL jsonb_array_elements(
-          CASE WHEN jsonb_typeof(r.items) = 'array' THEN r.items ELSE '[]'::jsonb END
-        ) AS item
-        WHERE r.rn <= ${ROWS_PER_GROUP}
-        GROUP BY r.reason, item ->> 'product_id'
-      ),
       groups AS (
         SELECT
           reason,
@@ -83,29 +82,60 @@ export class PrismaOrderViewQueries extends OrderViewQueries {
           ARRAY_AGG(order_id ORDER BY rn) FILTER (WHERE rn <= ${ORDER_IDS_PER_GROUP}) AS order_ids
         FROM ranked
         GROUP BY reason
+      ),
+      totals AS (
+        SELECT COALESCE(SUM(count), 0)::bigint AS total_rejected, COUNT(*) AS total_groups
+        FROM groups
+      ),
+      top_groups AS (
+        SELECT reason, count, order_ids
+        FROM groups
+        ORDER BY count DESC, reason COLLATE "C" ASC
+        LIMIT ${limits.groups}
+      ),
+      products AS (
+        SELECT r.reason, item ->> 'product_id' AS product_id
+        FROM ranked r
+        JOIN top_groups t ON t.reason = r.reason
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(r.items) = 'array' THEN r.items ELSE '[]'::jsonb END
+        ) AS item
+        WHERE r.rn <= ${ROWS_PER_GROUP}
+        GROUP BY r.reason, item ->> 'product_id'
+      ),
+      product_lists AS (
+        SELECT
+          reason,
+          COUNT(*) AS product_total,
+          (ARRAY_AGG(product_id ORDER BY product_id COLLATE "C"))[1:${limits.productIdsPerGroup}::int] AS product_ids
+        FROM products
+        GROUP BY reason
       )
       SELECT
         g.reason,
         g.count,
         g.order_ids,
-        COALESCE(
-          (SELECT ARRAY_AGG(p.product_id) FROM products p WHERE p.reason = g.reason),
-          ARRAY[]::text[]
-        ) AS product_ids
-      FROM groups g`;
+        COALESCE(p.product_ids, ARRAY[]::text[]) AS product_ids,
+        COALESCE(p.product_total, 0) AS product_total,
+        t.total_rejected,
+        t.total_groups
+      FROM top_groups g
+      CROSS JOIN totals t
+      LEFT JOIN product_lists p ON p.reason = g.reason
+      ORDER BY g.count DESC, g.reason COLLATE "C" ASC`;
 
-    const groups = rows
-      .map((row): RejectionGroup => ({
-        reason: row.reason,
-        count: Number(row.count),
-        productIds: [...row.product_ids].sort(),
-        orderIds: row.order_ids,
-      }))
-      .sort((a, b) => b.count - a.count || a.reason.localeCompare(b.reason));
+    const groups = rows.map((row): RejectionGroup => ({
+      reason: row.reason,
+      count: Number(row.count),
+      productIds: row.product_ids,
+      productTotal: Number(row.product_total),
+      orderIds: row.order_ids,
+    }));
+    // With no rows there are no totals to read: nothing was rejected.
+    const [first] = rows;
     return {
-      // Every group is returned, so the sum is exact. Once #80 caps the
-      // groups, compute this before the cap.
-      totalRejected: groups.reduce((sum, group) => sum + group.count, 0),
+      totalRejected: Number(first?.total_rejected ?? 0),
+      totalGroups: Number(first?.total_groups ?? 0),
       groups,
     };
   }
@@ -117,6 +147,9 @@ interface RejectionRow {
   count: bigint;
   order_ids: string[];
   product_ids: string[];
+  product_total: bigint;
+  total_rejected: bigint;
+  total_groups: bigint;
 }
 
 /**

@@ -7,6 +7,7 @@ import {
   OrderQueries,
   type OrderSearch,
   type OrderSummary,
+  type RejectionLimits,
   type RejectionSummary,
   type TimeRange,
 } from '../application/contracts/order-queries.js';
@@ -53,8 +54,10 @@ export class ReadModelOrderQueries extends OrderQueries {
     return this.views.search(filters);
   }
 
-  async rejectionSummary(range: TimeRange): Promise<RejectionSummary> {
-    const { totalRejected, groups } = await this.views.rejectionStats(range);
-    return { totalRejected, groups };
+  rejectionSummary(
+    range: TimeRange,
+    limits: RejectionLimits,
+  ): Promise<RejectionSummary> {
+    return this.views.rejectionStats(range, limits);
   }
 }
