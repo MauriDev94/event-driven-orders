@@ -228,6 +228,36 @@ describe('ReadModelOrderQueries', () => {
       });
     });
 
+    it('counts exactly past the rows read for the ids and products', async () => {
+      const lastEventAt = new Date('2026-10-31T10:00:00.000Z');
+      const rejected = (reason: string, count: number) =>
+        Array.from({ length: count }, () => ({
+          orderId: randomUUID(),
+          status: 'rejected' as const,
+          stockResult: 'rejected' as const,
+          rejectionReason: reason,
+          createdAt: lastEventAt,
+          lastEventAt,
+        }));
+      await prisma.orderView.createMany({
+        data: [
+          ...rejected(SKU_005_REASON, 1_100),
+          ...rejected(SKU_004_REASON, 300),
+        ],
+      });
+
+      const summary = await queries.rejectionSummary({});
+
+      expect(summary.totalRejected).toBe(1_400);
+      expect(
+        summary.groups.map((group) => [group.reason, group.count]),
+      ).toEqual([
+        [SKU_005_REASON, 1_100],
+        [SKU_004_REASON, 300],
+      ]);
+      expect(summary.groups.every((g) => g.orderIds.length === 20)).toBe(true);
+    });
+
     it('only counts the orders created in the range', async () => {
       await rejectedOrder('2026-10-30T10:00:00.000Z', SKU_005_REASON, [
         'SKU-005',
