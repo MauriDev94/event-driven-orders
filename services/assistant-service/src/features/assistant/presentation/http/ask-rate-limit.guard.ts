@@ -13,7 +13,7 @@ import {
   type RateLimitDecision,
   RateLimiter,
   RateLimiterUnavailableError,
-} from '../../application/contracts/rate-limiter.js';
+} from '../../../../core/rate-limit/rate-limiter.js';
 import { UNAVAILABLE_MESSAGE } from './assistant.errors.js';
 
 /**

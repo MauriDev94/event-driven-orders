@@ -1,9 +1,9 @@
-import type { RedisConnection } from '../../../core/cache/redis.connection.js';
+import type { RedisConnection } from '../cache/redis.connection.js';
 import {
   type RateLimitDecision,
   RateLimiter,
   RateLimiterUnavailableError,
-} from '../application/contracts/rate-limiter.js';
+} from './rate-limiter.js';
 
 export interface RedisRateLimiterOptions {
   limit: number;

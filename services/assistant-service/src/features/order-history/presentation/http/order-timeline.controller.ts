@@ -4,7 +4,9 @@ import {
   Inject,
   NotFoundException,
   Param,
+  UseGuards,
 } from '@nestjs/common';
+import { TimelineRateLimitGuard } from './timeline-rate-limit.guard.js';
 import { GetOrderTimeline } from '../../application/usecases/get-order-timeline.js';
 import {
   type OrderTimelineResponse,
@@ -20,6 +22,7 @@ export class OrderTimelineController {
 
   /** The order's history without the LLM, for the e2e tests and the frontend. */
   @Get(':orderId/timeline')
+  @UseGuards(TimelineRateLimitGuard)
   async timeline(
     @Param('orderId') orderId: string,
   ): Promise<OrderTimelineResponse> {
