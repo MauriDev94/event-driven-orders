@@ -74,15 +74,16 @@ Ajustes para que el stack corra en la VM gratis de Oracle, que es ARM (Ampere A1
     - la republicación al reintento no espera el publisher confirm, como sí hace Python;
     - tests de la conexión y de los 5 eventos con el handler real.
   - [ ] Tests de regresión: `TRUST_PROXY`, el conflicto de concurrencia, el doble del eval, las métricas, los contratos y los umbrales de ramas y funciones (issue #85).
-  - [ ] ADR-0025 (verificación de hechos y outcome `leaked`), el plan del asistente y la plantilla de issues (issue #86).
+  - [x] ADR-0025 (verificación de hechos y outcome `leaked`), el plan del asistente y la plantilla de issues (issue #86, [ADR-0025](adr/0025-verificacion-de-hechos-y-filtracion-del-prompt.md), PR #91).
+  - [ ] Calibrar con el eval el umbral de filtración del prompt, `LEAK_WORDS` (issue #90). Hoy una respuesta que repite 8 palabras seguidas del prompt se reemplaza ([ADR-0025](adr/0025-verificacion-de-hechos-y-filtracion-del-prompt.md)); falta fijar ese número con el eval.
   - [ ] Infra, CI y observabilidad (issue #87):
     - `deploy.sh` sin `--wait`;
     - Grafana sin paneles del asistente;
-    - compose no pasa `ASK_RATE_LIMIT_PER_MINUTE` ni `LLM_DAILY_CALL_LIMIT`;
+    - ~~compose no pasa `ASK_RATE_LIMIT_PER_MINUTE` ni `LLM_DAILY_CALL_LIMIT`~~ (ya los pasa, desde el issue #81);
     - CI sin `permissions`, `concurrency` ni `timeout-minutes`;
     - Caddy publica el `/metrics` de `order-service`.
   - Menores, sin issue:
-    - pino-http sin `redact`, y `X-Correlation-ID` sin validar;
+    - pino-http sin `redact` (lo cubre el issue #94), y `X-Correlation-ID` sin validar;
     - el shutdown no espera a los handlers en vuelo;
     - el timeline lee la vista y los eventos sin transacción;
     - `TRUST_PROXY=1` no se interpreta como un número de saltos;
@@ -104,16 +105,16 @@ Ajustes para que el stack corra en la VM gratis de Oracle, que es ARM (Ampere A1
   - Publicar el asistente espera la autenticación (abajo), por los hallazgos de la auditoría del 2026-11-07 (Paso 3).
   - [x] **Tope diario global de llamadas al modelo** ([ADR-0024](adr/0024-tope-diario-de-llamadas-al-modelo.md), issue #65). El rate limit es por IP y por minuto, pero la cuota de Gemini es por proyecto y por día (500 solicitudes con Flash Lite), así que varios visitantes la podían agotar. Ahora hay un tope de 400 llamadas al modelo por día, contadas en Redis con la fecha de la hora del Pacífico, que es cuando Gemini reinicia su cuota. Se cuentan llamadas y no preguntas, porque una pregunta hace de 2 a 5. Pasado el tope, el asistente responde 503 sin llamar al modelo.
   - [x] **Un reintento ante fallas momentáneas de Gemini** (issue #65). En la prueba en vivo del 2026-11-01, Gemini respondió 503 a una pregunta, y la misma pregunta funcionó segundos después. `GeminiLlmClient` reintenta una vez, después de 1 s, cuando la API responde 500 o 503, siempre dentro de los 30 s de la pregunta. Un 429 (cuota agotada) no se reintenta.
-- [ ] **Autenticación: cada visitante ve solo sus pedidos.** Se decidió el 2026-11-08 y todavía no tiene issue: se crea cuando esté el diseño.
+- [ ] **Autenticación: cada visitante ve solo sus pedidos** ([ADR-0027](adr/0027-identidad-anonima-firmada.md), issue #92). Decisión del 2026-11-09: una sesión anónima firmada. `order-service` emite un JWT HS256 de 7 días en `POST /v1/session`, cada servicio lo verifica por su cuenta, el cliente sale del token y un pedido ajeno responde 404. En el asistente, el servidor fija el cliente de cada consulta y el modelo nunca lo elige. Los límites siguen por IP y el tope de llamadas al modelo sigue siendo global.
 
   El problema: sin login, lo único que protege un pedido es que su UUID no se puede adivinar. El asistente rompe eso, porque sus citas y su texto nombran pedidos de cualquiera. Preguntando por franjas de tiempo se pueden enumerar todos y leerlos con `GET /v1/orders/{id}` o con `/timeline`. Reducir las citas no alcanza, porque el modelo puede escribir en su respuesta los IDs que le devuelve `search_orders`.
 
-  Primero va el diseño (software-architect, y después un ADR), que tiene que resolver:
-  - Cómo obtiene identidad un visitante: un login con Google, como en Monolith, o una sesión anónima que no pide nada.
-  - Qué cambia en `order-service`: el cliente sale del token y no del body, y `GET /v1/orders/{id}` revisa quién es el dueño.
-  - Qué cambia en el asistente: `/timeline` revisa el dueño, y las herramientas filtran por cliente.
+  - [ ] La sesión anónima en `order-service` y los pedidos visibles solo para su dueño: `POST /v1/session`, `get_current_customer`, `AUTH_TOKEN_SECRET` en compose y en `make env` (issue #93).
+  - [ ] `assistant-service` verifica la sesión y filtra todo por cliente: guard con `jose`, dueño en el timeline, `customerId` obligatorio en los puertos, índice y `redact` en los logs, más el job de CI que cruza PyJWT con `jose` (issue #94).
+  - [ ] Casos de aislamiento entre clientes en el eval del asistente (issue #95).
+  - [ ] El e2e de dos visitantes y la documentación de la autenticación: README, CLAUDE.md y `docs/deploy.md` (issue #96).
 
-  El Paso 7 también lo necesita.
+  La cookie `HttpOnly` y `GET /v1/orders` ("mis pedidos") quedan para el Paso 7, que también necesita la autenticación.
 - [ ] **Prueba de carga** (k6 o Locust): cientos de órdenes concurrentes sobre el mismo SKU, para mostrar que no hay sobreventa ([ADR-0007](adr/0007-reserva-de-stock-atomica.md)) y sacar el screenshot del dashboard de Grafana con tráfico real.
 - [ ] **GIF o video del flujo en el README**: crear un pedido, verlo pasar a `confirmed`, el email en Mailpit y el dashboard de Grafana. Es la evidencia que no depende de la VM: si Oracle la reclama o se cae, el README sigue mostrando la app funcionando. Se graba con el stack local, después de Mailpit (paso 2), y se vuelve a grabar cuando esté el asistente. El estilo visual lo elige el autor del repo antes de grabar.
 - [ ] **Guía de estudio del código** (`docs/guia-de-estudio.md`); ya no espera al deploy. Los ADRs explican cada decisión por separado; falta el recorrido que las une. Seguir un pedido desde `POST /v1/orders` hasta el email y la respuesta del asistente, y en cada paso decir qué archivo y qué función lo hace, qué patrón aplica, qué ADR lo explica y qué test lo prueba. Cerrar con las preguntas que una entrevista haría sobre el diseño (por qué no outbox todavía, qué pasa si se cae el broker, cómo se evita la sobreventa) y dónde está la respuesta en el repo. Sirve para estudiar el repo y para explicarlo.

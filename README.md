@@ -510,7 +510,7 @@ Las más significativas:
 | [0025](docs/adr/0025-verificacion-de-hechos-y-filtracion-del-prompt.md) | Verificación de montos y SKU, y reemplazo de una respuesta que copia el prompt (`leaked`) | Un monto inventado o una regla del prompt copiada no llegan al cliente como `answered` |
 | [0026](docs/adr/0026-redis-compartido-ttl-y-topes.md) | Un Redis con `volatile-ttl`: toda clave con TTL y topes por minuto | Llenar la caché no desaloja el contador diario, y el asistente no pasa de forma sostenida la cuota por minuto de Gemini |
 
-**[Ver los 26 ADRs →](docs/adr/README.md)**
+**[Ver los 27 ADRs →](docs/adr/README.md)**
 
 ---
 
