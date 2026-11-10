@@ -19,6 +19,7 @@ from typing import Any
 
 import httpx
 import pytest
+from conftest import CustomerSession
 
 pytestmark = pytest.mark.e2e
 
@@ -38,13 +39,11 @@ def _ask(assistant_client: httpx.Client, question: str) -> dict[str, Any]:
 def _rejected_order(
     order_client: httpx.Client,
     assistant_client: httpx.Client,
-    customer_id: str,
     wait_until: Callable[..., None],
 ) -> tuple[str, list[str]]:
     created = order_client.post(
         "/v1/orders",
         json={
-            "customer_id": customer_id,
             "lines": [{"product_id": _SKU_LOW_STOCK, "quantity": 999, "unit_price": "10.00"}],
         },
     )
@@ -61,14 +60,11 @@ def _rejected_order(
 
 
 def test_assistant_explains_a_rejection_citing_the_order_and_its_events(
-    order_client: httpx.Client,
+    customer_session: CustomerSession,
     assistant_client: httpx.Client,
-    unique_customer_id: str,
     wait_until: Callable[..., None],
 ) -> None:
-    order_id, event_ids = _rejected_order(
-        order_client, assistant_client, unique_customer_id, wait_until
-    )
+    order_id, event_ids = _rejected_order(customer_session.client, assistant_client, wait_until)
 
     body = _ask(assistant_client, f"¿Por qué se rechazó el pedido {order_id}?")
 

@@ -153,6 +153,7 @@ services:
       DB_USER: ${ORDERS_DB_USER}
       DB_PASSWORD: ${ORDERS_DB_PASSWORD}
       DB_NAME: ${ORDERS_DB_NAME}
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?}
     ports:
       - "8001:8000"
     depends_on:
@@ -219,6 +220,8 @@ services:
       RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER}:${RABBITMQ_DEFAULT_PASS}@rabbitmq:5672/
       DATABASE_URL: postgresql://${ASSISTANT_DB_USER}:${ASSISTANT_DB_PASSWORD}@postgres-assistant:5432/${ASSISTANT_DB_NAME}
       REDIS_URL: redis://default:${REDIS_PASSWORD}@redis:6379/0
+      # Not read until the guard of ADR-0027 lands in this service.
+      AUTH_TOKEN_SECRET: ${AUTH_TOKEN_SECRET:?}
       # `fake` answers with fixed rules and needs no key, so `make up` works
       # out of the box. For the real model set LLM_PROVIDER=gemini and
       # GEMINI_API_KEY in the root env file (ADR-0022).

@@ -16,3 +16,7 @@ class ValidationError(AppError):
 
 class DatabaseError(AppError):
     """Mapped to HTTP 500 for persistence failures."""
+
+
+class UnauthorizedError(AppError):
+    """Mapped to HTTP 401 with ``WWW-Authenticate: Bearer``."""

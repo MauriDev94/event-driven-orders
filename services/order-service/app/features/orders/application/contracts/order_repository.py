@@ -17,6 +17,15 @@ class OrderRepository(ABC):
         ...
 
     @abstractmethod
+    def get_by_id_for_customer(self, order_id: str, customer_id: str) -> Order | None:
+        """Return the order only if it belongs to the customer.
+
+        Someone else's order and a missing one are indistinguishable: both
+        come back as None from the same single query (ADR-0027).
+        """
+        ...
+
+    @abstractmethod
     def update(self, order: Order) -> Order:
         """Persist changes to an existing order."""
         ...

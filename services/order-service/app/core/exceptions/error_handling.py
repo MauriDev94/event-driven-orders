@@ -7,6 +7,7 @@ from app.core.exceptions.exceptions import (
     ConflictError,
     DatabaseError,
     NotFoundError,
+    UnauthorizedError,
     ValidationError,
 )
 
@@ -15,6 +16,14 @@ logger = logging.getLogger(__name__)
 
 async def not_found_handler(request: Request, exc: NotFoundError) -> JSONResponse:
     return JSONResponse(status_code=status.HTTP_404_NOT_FOUND, content={"message": str(exc)})
+
+
+async def unauthorized_handler(request: Request, exc: UnauthorizedError) -> JSONResponse:
+    return JSONResponse(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        content={"message": str(exc)},
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 async def conflict_handler(request: Request, exc: ConflictError) -> JSONResponse:
@@ -45,6 +54,7 @@ async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse
 def register_exception_handlers(app: FastAPI) -> None:
     """Register global exception handlers mapping domain errors to HTTP."""
     app.add_exception_handler(NotFoundError, not_found_handler)
+    app.add_exception_handler(UnauthorizedError, unauthorized_handler)
     app.add_exception_handler(ConflictError, conflict_handler)
     app.add_exception_handler(ValidationError, validation_handler)
     app.add_exception_handler(DatabaseError, database_handler)

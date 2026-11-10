@@ -187,37 +187,52 @@ La migración inicial siembra estos productos para poder probar el flujo sin dat
 
 ## Cómo probar el flujo end-to-end a mano
 
-Con el stack arriba (`make up`), todo el flujo se dispara con un solo POST.
+Con el stack arriba (`make up`), primero abre una sesión anónima (ADR-0027) y después todo el flujo se dispara con un solo POST. El token vale 7 días y es tu identidad: el `customer_id` sale de él (el campo `sub`), no del body, y `order-service` solo te deja leer tus propios pedidos. El asistente aplica la misma regla a partir de #94; hasta entonces sus endpoints no piden token.
+
+```bash
+# bash / curl
+TOKEN=$(curl -s -X POST http://localhost:8001/v1/session | jq -r .access_token)
+```
+
+```powershell
+# PowerShell
+$token = (Invoke-RestMethod -Uri http://localhost:8001/v1/session -Method Post).access_token
+$headers = @{ Authorization = "Bearer $token" }
+```
+
+En Swagger (http://localhost:8001/docs), el botón "Authorize" recibe ese mismo token.
 
 ### Camino feliz (stock suficiente)
 
 ```bash
 # bash / curl
 curl -X POST http://localhost:8001/v1/orders \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"customer_id": "c-1", "lines": [{"product_id": "SKU-001", "quantity": 1, "unit_price": "10.00"}]}'
+  -d '{"lines": [{"product_id": "SKU-001", "quantity": 1, "unit_price": "10.00"}]}'
 ```
 
 ```powershell
 # PowerShell
 $body = @{
-    customer_id = "c-1"
     lines = @(@{ product_id = "SKU-001"; quantity = 1; unit_price = "10.00" })
-} | ConvertTo-Json
+} | ConvertTo-Json -Depth 3
 
-Invoke-RestMethod -Uri http://localhost:8001/v1/orders -Method Post -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri http://localhost:8001/v1/orders -Method Post -Headers $headers -Body $body -ContentType "application/json"
 ```
 
 Tras unos segundos:
 
 ```bash
-curl http://localhost:8001/v1/orders/<order_id>   # status: "confirmed"
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8001/v1/orders/<order_id>   # status: "confirmed"
 ```
 ```powershell
-Invoke-RestMethod -Uri "http://localhost:8001/v1/orders/<order_id>"   # status: "confirmed"
+Invoke-RestMethod -Uri "http://localhost:8001/v1/orders/<order_id>" -Headers $headers   # status: "confirmed"
 ```
 
-Y en Mailpit (http://localhost:8025) llega un email "Your order `<order_id>` is confirmed" a `c-1@example.com`.
+Sin token, o con uno inválido, responde 401. El pedido de otra persona responde 404, con el mismo body que un pedido que no existe.
+
+Y en Mailpit (http://localhost:8025) llega un email "Your order `<order_id>` is confirmed" a `<customer_id>@example.com`, donde `<customer_id>` es el `customer_id` de la respuesta del pedido.
 
 ### Camino de rechazo (stock insuficiente)
 
@@ -225,20 +240,20 @@ Pide más de lo que hay (`SKU-005` solo tiene 5 unidades):
 
 ```bash
 curl -X POST http://localhost:8001/v1/orders \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"customer_id": "c-2", "lines": [{"product_id": "SKU-005", "quantity": 999, "unit_price": "10.00"}]}'
+  -d '{"lines": [{"product_id": "SKU-005", "quantity": 999, "unit_price": "10.00"}]}'
 ```
 
 ```powershell
 $body = @{
-    customer_id = "c-2"
     lines = @(@{ product_id = "SKU-005"; quantity = 999; unit_price = "10.00" })
-} | ConvertTo-Json
+} | ConvertTo-Json -Depth 3
 
-Invoke-RestMethod -Uri http://localhost:8001/v1/orders -Method Post -Body $body -ContentType "application/json"
+Invoke-RestMethod -Uri http://localhost:8001/v1/orders -Method Post -Headers $headers -Body $body -ContentType "application/json"
 ```
 
-La orden termina en `status: "rejected"` y llega un email "Your order `<order_id>` was rejected" con el motivo (`insufficient stock for product SKU-005`) a `c-2@example.com`.
+La orden termina en `status: "rejected"` y llega un email "Your order `<order_id>` was rejected" con el motivo (`insufficient stock for product SKU-005`) a `<customer_id>@example.com`.
 
 ### Historia del pedido (`assistant-service`)
 
@@ -251,7 +266,7 @@ curl http://localhost:8004/v1/assistant/orders/<order_id>/timeline
 ```json
 {
   "order_id": "b2b76920-…",
-  "customer_id": "c-2",
+  "customer_id": "3f2b8c1e-9a4d-4e7b-8c2a-1d5e6f7a8b9c",
   "status": "rejected",
   "stock_result": "rejected",
   "rejection_reason": "insufficient stock for product SKU-005",
@@ -289,7 +304,7 @@ curl -X POST http://localhost:8004/v1/assistant/ask \
 
 - **Citas verificadas.** Las arma el servidor con lo que devolvieron las herramientas, no con lo que dice el modelo. Si la respuesta nombra un ID, un monto o un SKU que ninguna herramienta devolvió (ni traía la pregunta), se reemplaza por "No tengo datos suficientes para responder eso." y `outcome` vale `ungrounded`. Los otros valores son `answered`, `no_data`, `leaked` (abajo) y `max_iterations`. Los montos se reconocen escritos de varias formas (`$1.250`, `1.250,00`, `1250.0`) y se comparan por valor; los conteos, las cantidades y las fechas no se revisan. Una suma que calcule el modelo tampoco está en la evidencia, así que el prompt le pide copiar los montos tal como vienen.
 - **Sin repetir el prompt de sistema.** Si la respuesta copia 8 palabras seguidas del prompt (sin contar mayúsculas ni puntuación), se reemplaza por la misma frase y `outcome` vale `leaked`. Un tramo tan largo no aparece por casualidad en una respuesta normal. Una regla traducida o dicha con otras palabras pasa: eso no se puede detectar con una regla fija, así que el prompt también pide no citar las reglas.
-- **Sin texto libre en los ids.** Lo que leen las herramientas sale de los pedidos, y `order-service` solo acepta en `customer_id` y `product_id` ids de hasta 36 caracteres, con letras, dígitos, `.`, `_` y `-`; cualquier otra cosa da 422. Así un pedido no puede colar instrucciones en lo que lee el modelo. Un pedido tiene como máximo 50 líneas (si no, 422), y los contratos zod del asistente aplican los mismos límites: ids con ese patrón, `reason` de hasta 200 caracteres e `items` de hasta 50; un mensaje que no los cumpla va a la DLQ. Las herramientas tampoco mandan `customer_id` al modelo.
+- **Sin texto libre en los ids.** Lo que leen las herramientas sale de los pedidos, y `order-service` solo acepta en `product_id` ids de hasta 36 caracteres, con letras, dígitos, `.`, `_` y `-`; cualquier otra cosa da 422. El `customer_id` viene del `sub` del token: el servicio lo emite como un UUID y además lo revisa contra ese mismo patrón, y un `sub` que no lo cumple da 401, no 422. Así un pedido no puede colar instrucciones en lo que lee el modelo. Un pedido tiene como máximo 50 líneas (si no, 422), y los contratos zod del asistente aplican los mismos límites: ids con ese patrón, `reason` de hasta 200 caracteres e `items` de hasta 50; un mensaje que no los cumpla va a la DLQ. Las herramientas tampoco mandan `customer_id` al modelo.
 - **Tope a lo que le llega al modelo.** Los SKU los elige el visitante, y el motivo de un rechazo incluye el SKU, así que cada SKU inventado sería un grupo propio. `rejection_summary` devuelve a lo más 10 grupos (los más grandes) y 20 `product_ids` por grupo, y `get_order_timeline` a lo más 20 `items`. Cuando se corta una lista, la salida lo dice (`truncated`, `product_ids_truncated`, `items_truncated`) y trae el total (`groups_total` e `items_total` son exactos; `product_ids_total` cuenta los productos distintos sobre los 1.000 pedidos más recientes del grupo, no sobre todo el grupo); `total_rejected` es siempre exacto. Como último recurso, una salida de herramienta de más de 32 KiB (JSON serializado) se reemplaza por `{ "error": "result too large, narrow the query" }` y no deja evidencia ni citas.
 - **`fake` por defecto.** Compose corre el asistente con `LLM_PROVIDER=fake`, un modelo de reglas fijas que no necesita clave: con un ID en la pregunta pide su timeline; sin ID, lista los últimos pedidos. Para usar Gemini, crea una clave gratis en [Google AI Studio](https://aistudio.google.com/apikey), ponla en `GEMINI_API_KEY` de tu `.env` junto con `LLM_PROVIDER=gemini` y recrea el servicio (`docker compose up -d assistant-service`). El modelo por defecto es `gemini-3.5-flash-lite` (`LLM_MODEL`): en el plan gratis permite 500 solicitudes por día, y `gemini-3.8-flash`, solo 20. En el plan gratis, Google puede usar lo que recibe para mejorar sus productos: mándale solo pedidos de prueba.
 - **Rate limit en Redis.** 5 preguntas por minuto por IP (`ASK_RATE_LIMIT_PER_MINUTE`), para cuidar la cuota gratis. Pasado el límite, responde 429 con `Retry-After`. Una pregunta puede hacer hasta 5 llamadas al modelo, así que ese límite por IP no alcanza para la cuota por minuto de Google, y la cuota es por proyecto y no por IP. Por eso hay además dos topes globales de llamadas al modelo, contados en Redis en una sola operación atómica (un script Lua): 15 por minuto (`LLM_MINUTE_CALL_LIMIT`, el número que el plan gratis permite al modelo por defecto; la ventana es fija por minuto calendario, así que justo en el borde entre dos minutos pueden pasar hasta el doble en pocos segundos, Gemini responde 429 y esa pregunta recibe un 503) y 400 por día (`LLM_DAILY_CALL_LIMIT`), este último con la fecha de la hora del Pacífico, que es cuando Gemini reinicia su cuota. Una llamada rechazada por uno de los topes no gasta una unidad del otro. Pasado cualquiera de los dos, la respuesta es 503 y no se llama al modelo ([ADR-0024](docs/adr/0024-tope-diario-de-llamadas-al-modelo.md), [ADR-0026](docs/adr/0026-redis-compartido-ttl-y-topes.md)). Si Redis no responde, la pregunta recibe 503 (falla cerrado), pero el timeline sigue andando ([ADR-0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md)).
