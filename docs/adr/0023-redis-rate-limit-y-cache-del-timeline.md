@@ -1,6 +1,6 @@
 # ADR-0023 — Redis para el rate limit del asistente (falla cerrado) y una caché invalidada por eventos (falla abierta)
 
-**Estado:** Aceptada · **Fecha:** 2026-10-31 · **Ámbito:** `assistant-service`, `docker-compose*.yml`
+**Estado:** Aceptada · Parcialmente reemplazada por [ADR-0026](0026-redis-compartido-ttl-y-topes.md) · **Fecha:** 2026-10-31 · **Ámbito:** `assistant-service`, `docker-compose*.yml`
 
 ## Contexto
 
