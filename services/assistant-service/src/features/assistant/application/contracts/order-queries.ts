@@ -33,12 +33,25 @@ export interface OrderSearch extends TimeRange {
   limit: number;
 }
 
+/** How much of the summary the query may return; the totals stay exact. */
+export interface RejectionLimits {
+  /** Groups returned, the largest first. */
+  groups: number;
+  /** Product ids returned per group, in alphabetical order. */
+  productIdsPerGroup: number;
+}
+
 export interface RejectionSummary {
+  /** Every rejected order in the range, whatever the group cap. */
   totalRejected: number;
+  /** Every distinct reason in the range, whatever the group cap. */
+  totalGroups: number;
   groups: {
     reason: string;
     count: number;
     productIds: string[];
+    /** Distinct products over the 1,000 most recent orders of the group (`ROWS_PER_GROUP` in the Prisma query): a lower bound when the group is bigger, and more than the ones returned. */
+    productTotal: number;
     orderIds: string[];
   }[];
 }
@@ -50,6 +63,9 @@ export abstract class OrderQueries {
   /** Most recent activity first. */
   abstract search(filters: OrderSearch): Promise<OrderSummary[]>;
 
-  /** Rejected orders grouped by reason, largest group first. */
-  abstract rejectionSummary(range: TimeRange): Promise<RejectionSummary>;
+  /** Rejected orders grouped by reason, largest group first, up to `limits`. */
+  abstract rejectionSummary(
+    range: TimeRange,
+    limits: RejectionLimits,
+  ): Promise<RejectionSummary>;
 }

@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { OrderDetails } from '../../../src/features/assistant/application/contracts/order-queries.js';
 import { InMemoryOrderQueries } from '../../../eval/in-memory-order-queries.js';
 
+const LIMITS = { groups: 10, productIdsPerGroup: 20 };
+
 function order(
   overrides: Partial<OrderDetails> & Pick<OrderDetails, 'status'>,
 ): OrderDetails {
@@ -75,20 +77,55 @@ describe('InMemoryOrderQueries', () => {
   });
 
   it('groups the rejected orders of a range by reason', async () => {
-    await expect(queries.rejectionSummary(today)).resolves.toEqual({
+    await expect(queries.rejectionSummary(today, LIMITS)).resolves.toEqual({
       totalRejected: 1,
+      totalGroups: 1,
       groups: [
         {
           reason: 'insufficient stock for product SKU-005',
           count: 1,
           productIds: ['SKU-005'],
+          productTotal: 1,
           orderIds: [rejected.orderId],
         },
       ],
     });
-    await expect(queries.rejectionSummary({})).resolves.toMatchObject({
+    await expect(queries.rejectionSummary({}, LIMITS)).resolves.toMatchObject({
       totalRejected: 2,
+      totalGroups: 1,
       groups: [{ count: 2 }],
+    });
+  });
+
+  it('applies the group and product caps like the real query', async () => {
+    const reasons = ['a', 'b', 'c'].map((letter, i) =>
+      order({
+        status: 'rejected',
+        rejectionReason: `reason ${letter}`,
+        items: [
+          { productId: 'SKU-001', quantity: 1, unitPrice: '1.00' },
+          { productId: 'SKU-002', quantity: 1, unitPrice: '1.00' },
+          { productId: 'SKU-003', quantity: 1, unitPrice: '1.00' },
+        ],
+        lastEventAt: new Date(`2026-11-04T1${i}:00:00.000Z`),
+      }),
+    );
+    const capped = new InMemoryOrderQueries(reasons);
+
+    const summary = await capped.rejectionSummary(
+      {},
+      { groups: 2, productIdsPerGroup: 2 },
+    );
+
+    expect(summary.totalRejected).toBe(3);
+    expect(summary.totalGroups).toBe(3);
+    expect(summary.groups.map((group) => group.reason)).toEqual([
+      'reason a',
+      'reason b',
+    ]);
+    expect(summary.groups[0]).toMatchObject({
+      productIds: ['SKU-001', 'SKU-002'],
+      productTotal: 3,
     });
   });
 });

@@ -14,6 +14,12 @@ from pydantic import BaseModel, Field
 ID_MAX_LENGTH = 36
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
 
+# Lines per order. assistant-service bounds `items` of order.created to the same
+# number, so an order accepted here is never dead-lettered there; raise both
+# together. A real order has a handful of lines, and each one is a row, an
+# event item and, for the assistant, text the model may read.
+MAX_ORDER_LINES = 50
+
 
 class OrderLineRequest(BaseModel):
     product_id: str = Field(..., min_length=1, max_length=ID_MAX_LENGTH, pattern=ID_PATTERN)
@@ -23,7 +29,7 @@ class OrderLineRequest(BaseModel):
 
 class CreateOrderRequest(BaseModel):
     customer_id: str = Field(..., min_length=1, max_length=ID_MAX_LENGTH, pattern=ID_PATTERN)
-    lines: list[OrderLineRequest] = Field(..., min_length=1)
+    lines: list[OrderLineRequest] = Field(..., min_length=1, max_length=MAX_ORDER_LINES)
 
 
 class OrderLineResponse(BaseModel):

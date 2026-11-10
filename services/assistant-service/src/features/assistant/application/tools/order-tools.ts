@@ -27,6 +27,21 @@ export const TOOL_NAMES: ReadonlySet<string> = new Set([
   'rejection_summary',
 ]);
 
+/**
+ * What a tool may send the model. Visitors choose the SKUs and the number of
+ * lines, so nothing here may grow with the data (SEC-01). When a list is cut
+ * the output says so and gives the total (exact for groups and items; the products of a group are counted over its 1,000 most recent orders). The model reads these as
+ * tokens on every turn: 10 groups and 20 items are what a question needs to
+ * see, and the worst case is about 19 KB, under the byte cap that
+ * `AskAssistant` applies as a last resort.
+ */
+/** Rejection reasons embed a SKU, so each invented SKU is its own group. */
+export const MAX_REJECTION_GROUPS = 10;
+/** Products listed per rejection group. */
+export const MAX_PRODUCT_IDS_PER_GROUP = 20;
+/** Items of an order that `get_order_timeline` lists. */
+export const MAX_TIMELINE_ITEMS = 20;
+
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 const DAY_MS = 86_400_000;
 
@@ -99,7 +114,6 @@ function defineTool<S extends z.ZodObject>(
 function summary(order: OrderSummary) {
   return {
     order_id: order.orderId,
-    customer_id: order.customerId,
     status: order.status,
     stock_result: order.stockResult,
     rejection_reason: order.rejectionReason,
@@ -110,14 +124,17 @@ function summary(order: OrderSummary) {
 }
 
 function details(order: OrderDetails) {
+  const items = order.items?.slice(0, MAX_TIMELINE_ITEMS);
+  const cut = order.items !== null && order.items.length > MAX_TIMELINE_ITEMS;
   return {
     ...summary(order),
     items:
-      order.items?.map((item) => ({
+      items?.map((item) => ({
         product_id: item.productId,
         quantity: item.quantity,
         unit_price: item.unitPrice,
       })) ?? null,
+    ...(cut ? { items_truncated: true, items_total: order.items?.length } : {}),
     events: order.events.map((event) => ({
       event_id: event.eventId,
       event_type: event.eventType,
@@ -195,14 +212,27 @@ export function buildOrderTools(queries: OrderQueries): AssistantTool[] {
       'Rejected orders grouped by rejection reason, with the products and orders of each group.',
       z.object(rangeShape),
       async ({ from, to }) => {
-        const result = await queries.rejectionSummary(toRange(from, to));
+        const result = await queries.rejectionSummary(toRange(from, to), {
+          groups: MAX_REJECTION_GROUPS,
+          productIdsPerGroup: MAX_PRODUCT_IDS_PER_GROUP,
+        });
+        const groupsCut = result.totalGroups > result.groups.length;
         return {
           output: {
             total_rejected: result.totalRejected,
+            ...(groupsCut
+              ? { truncated: true, groups_total: result.totalGroups }
+              : {}),
             groups: result.groups.map((group) => ({
               reason: group.reason,
               count: group.count,
               product_ids: group.productIds,
+              ...(group.productTotal > group.productIds.length
+                ? {
+                    product_ids_truncated: true,
+                    product_ids_total: group.productTotal,
+                  }
+                : {}),
               order_ids: group.orderIds,
             })),
           },

@@ -3,6 +3,7 @@ import {
   OrderQueries,
   type OrderSearch,
   type OrderSummary,
+  type RejectionLimits,
   type RejectionSummary,
   type TimeRange,
 } from '../../src/features/assistant/application/contracts/order-queries.js';
@@ -11,9 +12,14 @@ import {
 export class StubOrderQueries extends OrderQueries {
   details = new Map<string, OrderDetails>();
   orders: OrderSummary[] = [];
-  rejections: RejectionSummary = { totalRejected: 0, groups: [] };
+  rejections: RejectionSummary = {
+    totalRejected: 0,
+    totalGroups: 0,
+    groups: [],
+  };
   readonly searches: OrderSearch[] = [];
   readonly rejectionRanges: TimeRange[] = [];
+  readonly rejectionLimits: RejectionLimits[] = [];
 
   async timeline(orderId: string): Promise<OrderDetails | null> {
     return this.details.get(orderId) ?? null;
@@ -24,7 +30,11 @@ export class StubOrderQueries extends OrderQueries {
     return this.orders;
   }
 
-  async rejectionSummary(range: TimeRange): Promise<RejectionSummary> {
+  async rejectionSummary(
+    range: TimeRange,
+    limits: RejectionLimits,
+  ): Promise<RejectionSummary> {
+    this.rejectionLimits.push(limits);
     this.rejectionRanges.push(range);
     return this.rejections;
   }

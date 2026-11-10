@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import {
   type AssistantTool,
   buildOrderTools,
+  MAX_PRODUCT_IDS_PER_GROUP,
+  MAX_REJECTION_GROUPS,
+  MAX_TIMELINE_ITEMS,
 } from '../../../../../src/features/assistant/application/tools/order-tools.js';
 import {
   orderSummary,
@@ -73,7 +76,6 @@ describe('order tools', () => {
         found: true,
         order: {
           order_id: orderId,
-          customer_id: 'c-1',
           status: 'rejected',
           stock_result: 'rejected',
           rejection_reason: 'insufficient stock for product SKU-005',
@@ -101,6 +103,80 @@ describe('order tools', () => {
       expect(run.evidence).toEqual([
         { orderId, eventIds: [created, rejected] },
       ]);
+    });
+
+    it('sends at most the item cap and says how many there are', async () => {
+      const orderId = randomUUID();
+      const total = MAX_TIMELINE_ITEMS + 25;
+      queries.details.set(orderId, {
+        ...orderSummary(orderId),
+        items: Array.from({ length: total }, (_, i) => ({
+          productId: `SKU-${i}`,
+          quantity: 1,
+          unitPrice: '1.00',
+        })),
+        events: [],
+      });
+
+      const { output } = await tool('get_order_timeline').run({
+        order_id: orderId,
+      });
+
+      const order = (output as { order: Record<string, unknown> }).order;
+      expect(order['items']).toHaveLength(MAX_TIMELINE_ITEMS);
+      expect(order['items']).toEqual(
+        Array.from({ length: MAX_TIMELINE_ITEMS }, (_, i) => ({
+          product_id: `SKU-${i}`,
+          quantity: 1,
+          unit_price: '1.00',
+        })),
+      );
+      expect(order).toMatchObject({
+        items_truncated: true,
+        items_total: total,
+      });
+    });
+
+    it('does not mention truncation when every item fits', async () => {
+      const orderId = randomUUID();
+      queries.details.set(orderId, {
+        ...orderSummary(orderId),
+        items: Array.from({ length: MAX_TIMELINE_ITEMS }, (_, i) => ({
+          productId: `SKU-${i}`,
+          quantity: 1,
+          unitPrice: '1.00',
+        })),
+        events: [],
+      });
+
+      const { output } = await tool('get_order_timeline').run({
+        order_id: orderId,
+      });
+
+      const order = (output as { order: Record<string, unknown> }).order;
+      expect(order['items']).toHaveLength(MAX_TIMELINE_ITEMS);
+      expect(order).not.toHaveProperty('items_truncated');
+      expect(order).not.toHaveProperty('items_total');
+    });
+
+    it('never sends the customer id', async () => {
+      const orderId = randomUUID();
+      queries.details.set(orderId, {
+        ...orderSummary(orderId, { customerId: 'visitor-chosen-id' }),
+        items: null,
+        events: [],
+      });
+      queries.orders = [
+        orderSummary(randomUUID(), { customerId: 'visitor-chosen-id' }),
+      ];
+
+      const timeline = await tool('get_order_timeline').run({
+        order_id: orderId,
+      });
+      const search = await tool('search_orders').run({});
+
+      expect(JSON.stringify(timeline.output)).not.toContain('visitor-chosen');
+      expect(JSON.stringify(search.output)).not.toContain('visitor-chosen');
     });
 
     it('says so when the order is unknown, with no evidence', async () => {
@@ -160,7 +236,6 @@ describe('order tools', () => {
         orders: [
           {
             order_id: first,
-            customer_id: 'c-1',
             status: 'rejected',
             stock_result: 'rejected',
             rejection_reason: 'insufficient stock for product SKU-005',
@@ -170,7 +245,6 @@ describe('order tools', () => {
           },
           {
             order_id: second,
-            customer_id: 'c-1',
             status: 'confirmed',
             stock_result: 'reserved',
             rejection_reason: null,
@@ -222,17 +296,20 @@ describe('order tools', () => {
       const [first, second, third] = [randomUUID(), randomUUID(), randomUUID()];
       queries.rejections = {
         totalRejected: 3,
+        totalGroups: 2,
         groups: [
           {
             reason: 'insufficient stock for product SKU-005',
             count: 2,
             productIds: ['SKU-005'],
+            productTotal: 1,
             orderIds: [first, second],
           },
           {
             reason: 'insufficient stock for product SKU-004',
             count: 1,
             productIds: ['SKU-001', 'SKU-004'],
+            productTotal: 2,
             orderIds: [third],
           },
         ],
@@ -264,6 +341,72 @@ describe('order tools', () => {
         { orderId: first, eventIds: [] },
         { orderId: second, eventIds: [] },
         { orderId: third, eventIds: [] },
+      ]);
+    });
+
+    it('asks the query for at most the group and product caps', async () => {
+      await tool('rejection_summary').run({});
+
+      expect(queries.rejectionLimits).toEqual([
+        {
+          groups: MAX_REJECTION_GROUPS,
+          productIdsPerGroup: MAX_PRODUCT_IDS_PER_GROUP,
+        },
+      ]);
+    });
+
+    it('says when groups were cut, with the exact totals', async () => {
+      const groups = Array.from({ length: MAX_REJECTION_GROUPS }, (_, i) => ({
+        reason: `insufficient stock for product SKU-${i}`,
+        count: 3,
+        productIds: [`SKU-${i}`],
+        productTotal: 1,
+        orderIds: [randomUUID()],
+      }));
+      queries.rejections = {
+        totalRejected: 500,
+        totalGroups: MAX_REJECTION_GROUPS + 40,
+        groups,
+      };
+
+      const { output } = await tool('rejection_summary').run({});
+
+      expect(output).toMatchObject({
+        total_rejected: 500,
+        truncated: true,
+        groups_total: MAX_REJECTION_GROUPS + 40,
+      });
+      expect((output['groups'] as unknown[]).length).toBe(MAX_REJECTION_GROUPS);
+    });
+
+    it('says when the products of a group were cut', async () => {
+      const productIds = Array.from(
+        { length: MAX_PRODUCT_IDS_PER_GROUP },
+        (_, i) => `SKU-${i}`,
+      );
+      queries.rejections = {
+        totalRejected: 2,
+        totalGroups: 1,
+        groups: [
+          {
+            reason: 'insufficient stock for product SKU-1',
+            count: 2,
+            productIds,
+            productTotal: MAX_PRODUCT_IDS_PER_GROUP + 30,
+            orderIds: [randomUUID()],
+          },
+        ],
+      };
+
+      const { output } = await tool('rejection_summary').run({});
+
+      expect(output).not.toHaveProperty('truncated');
+      expect(output['groups']).toEqual([
+        expect.objectContaining({
+          product_ids: productIds,
+          product_ids_truncated: true,
+          product_ids_total: MAX_PRODUCT_IDS_PER_GROUP + 30,
+        }),
       ]);
     });
   });
