@@ -3,6 +3,7 @@ import {
   OrderQueries,
   type OrderSearch,
   type OrderSummary,
+  type RejectionLimits,
   type RejectionSummary,
   type TimeRange,
 } from '../src/features/assistant/application/contracts/order-queries.js';
@@ -60,7 +61,10 @@ export class InMemoryOrderQueries extends OrderQueries {
       .map(summary);
   }
 
-  async rejectionSummary(range: TimeRange): Promise<RejectionSummary> {
+  async rejectionSummary(
+    range: TimeRange,
+    limits: RejectionLimits,
+  ): Promise<RejectionSummary> {
     const rejected = this.orders.filter(
       (order) => order.status === 'rejected' && inRange(order, range),
     );
@@ -69,22 +73,32 @@ export class InMemoryOrderQueries extends OrderQueries {
       const reason = order.rejectionReason ?? 'unspecified';
       groups.set(reason, [...(groups.get(reason) ?? []), order]);
     }
-    return {
-      totalRejected: rejected.length,
-      groups: [...groups]
-        .map(([reason, orders]) => ({
+    const all = [...groups]
+      .map(([reason, orders]) => {
+        const products = [
+          ...new Set(
+            orders.flatMap((order) =>
+              (order.items ?? []).map((item) => item.productId),
+            ),
+          ),
+        ].sort();
+        return {
           reason,
           count: orders.length,
-          productIds: [
-            ...new Set(
-              orders.flatMap((order) =>
-                (order.items ?? []).map((item) => item.productId),
-              ),
-            ),
-          ],
+          productIds: products.slice(0, limits.productIdsPerGroup),
+          productTotal: products.length,
           orderIds: orders.map((order) => order.orderId),
-        }))
-        .sort((a, b) => b.count - a.count),
+        };
+      })
+      .sort(
+        (a, b) =>
+          b.count - a.count ||
+          (a.reason < b.reason ? -1 : a.reason > b.reason ? 1 : 0),
+      );
+    return {
+      totalRejected: rejected.length,
+      totalGroups: all.length,
+      groups: all.slice(0, limits.groups),
     };
   }
 }

@@ -51,6 +51,53 @@ Ajustes para que el stack corra en la VM gratis de Oracle, que es ARM (Ampere A1
     - [x] **Estados en inglés** (issue #74). En una respuesta en español, el modelo copiaba el estado tal como lo devuelve la herramienta (`confirmed`, `pending`), en las tres corridas. Una regla del prompt de sistema ahora pide nombrarlo en el idioma de la respuesta, con los nombres en español solo para respuestas en español: con solo esos nombres, la pregunta en inglés se respondió en español. Con la regla final dio 16/16 y 15/16 ([reporte](../services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite-status-rule.md)).
     - [x] **El prompt de sistema se filtraba** (issue #76). En la pregunta por el stock, la respuesta copiaba en inglés la regla "You see each order's events, not the stock on hand…", en tres de las seis corridas del 2026-11-05. Ahora el servidor reemplaza una respuesta que repite 8 palabras seguidas del prompt (outcome `leaked`), el prompt pide no citar las reglas, y la del stock ya no es una frase lista para responder. El caso del stock exige `no_data`, así que el set sigue contando las filtraciones. Dio 16/16 en tres corridas seguidas ([reporte](../services/assistant-service/eval/results/2026-11-05-gemini-3.5-flash-lite-prompt-leak.md)). Una regla traducida o parafraseada no se detecta.
     - [ ] **La latencia varía.** Una pregunta que pasó en una corrida no respondió a tiempo en otra, aun con el margen del evaluador para el espaciado entre llamadas. En producción eso es un 503. No volvió a pasar en las corridas siguientes del 2026-11-05, pero no hay datos para saber cuánto margen queda bajo los 30 s. Primero medir: que el eval registre el tiempo de cada pregunta, sin las esperas del espaciado, y que el reporte muestre la mediana y el máximo por corrida. Con esos números, decidir si hay que tocar algo (el tope de 30 s, el `thinkingLevel` o los 5 turnos por pregunta) o si basta con dejarlo medido.
+- [ ] **Hallazgos de la auditoría del 2026-11-07.** La auditoría revisó `assistant-service` desde seis ángulos en paralelo: arquitectura, código, tests, seguridad, infraestructura y documentación. Dejó 54 hallazgos: 1 alto, 23 medios y 30 bajos. El gate pasa: lint, typecheck, format, 222 tests con 97,5 % de cobertura de líneas y 88 % de ramas, y el eval con `fake` en 5/16. Decisiones del 2026-11-08:
+  - Se mantiene un solo Redis.
+  - `order-history` pasa a ser el único dueño de `order_view`.
+  - La exposición de pedidos se resuelve con autenticación (Paso 4).
+  - La verificación de hechos lleva un ADR nuevo.
+
+  Los issues:
+  - [x] `order-history` es el único dueño de `order_view`, y el resumen de rechazos se agrupa en SQL, así que los conteos por motivo son exactos (issue #79).
+  - [x] **Tope al contexto que el asistente le manda al modelo** (issue #80). Es el único hallazgo alto. Nada limitaba lo que devuelven las herramientas, y `POST /v1/orders` aceptaba cualquier cantidad de líneas. Un visitante podía inflar el contexto de cada pregunta hasta que Gemini respondiera 429 o 400 y el asistente quedara en 503. Ahora las listas tienen tope, cada salida tiene un tope de bytes, un pedido tiene como máximo 50 líneas, Caddy corta los bodies de más de 64 000 bytes y `customer_id` ya no llega al modelo.
+  - [ ] **Contratos acotados de punta a punta** (issue #97, de la revisión de #80). Los límites de los contratos están copiados a mano en order-service y en el zod del asistente, y `shared/contracts` no tiene ninguno. Además, `unit_price` acepta cualquier cantidad de decimales: la base guarda el precio redondeado, pero el evento lo lleva sin redondear. `quantity` no tiene máximo: sobre el límite de la columna, la API responde 500. Y `X-Correlation-ID` llega a los eventos sin validar.
+  - [ ] **Redis protege el presupuesto diario** (issue #81). Hoy, llenar la caché del timeline puede hacer que Redis expulse el contador diario de llamadas al modelo, que entonces vuelve a cero. El arreglo:
+    - un tope de tamaño por entrada de caché;
+    - rate limit en `/timeline`;
+    - la política `volatile-ttl`;
+    - un tope global de llamadas por minuto.
+
+    Lleva un ADR-0026 que modifica ADR-0023. Bloquea publicar el asistente.
+  - [ ] Robustez del loop del agente (issue #82):
+    - una fecha imposible como `2026-13-01` da 500;
+    - el tope de 30 s no cubre las herramientas;
+    - en el último turno se ejecutan herramientas cuyo resultado el modelo nunca ve;
+    - una respuesta cortada por `MAX_TOKENS` pasa como `answered`;
+    - los topes están copiados a mano en el eval.
+  - [ ] El grounding no confunde porcentajes ni conteos con montos (issue #83).
+  - [ ] Mensajería (issue #84):
+    - un canal cerrado deja de consumir y `/health` sigue sano;
+    - la republicación al reintento no espera el publisher confirm, como sí hace Python;
+    - tests de la conexión y de los 5 eventos con el handler real.
+  - [ ] Tests de regresión: `TRUST_PROXY`, el conflicto de concurrencia, el doble del eval, las métricas, los contratos y los umbrales de ramas y funciones (issue #85).
+  - [ ] ADR-0025 (verificación de hechos y outcome `leaked`), el plan del asistente y la plantilla de issues (issue #86).
+  - [ ] Infra, CI y observabilidad (issue #87):
+    - `deploy.sh` sin `--wait`;
+    - Grafana sin paneles del asistente;
+    - compose no pasa `ASK_RATE_LIMIT_PER_MINUTE` ni `LLM_DAILY_CALL_LIMIT`;
+    - CI sin `permissions`, `concurrency` ni `timeout-minutes`;
+    - Caddy publica el `/metrics` de `order-service`.
+  - Menores, sin issue:
+    - pino-http sin `redact`, y `X-Correlation-ID` sin validar;
+    - el shutdown no espera a los handlers en vuelo;
+    - el timeline lee la vista y los eventos sin transacción;
+    - `TRUST_PROXY=1` no se interpreta como un número de saltos;
+    - el `payload` guardado es el contrato parseado, no el cuerpo tal como llegó;
+    - `MAX_RETRIES` y `delayMs` no se usan;
+    - `TOOL_NAMES` y los estados se mantienen a mano en cuatro lugares;
+    - la contraseña de Redis queda visible en la línea de comandos del proceso;
+    - no hay test de Redis que cae y vuelve;
+    - el 5/16 del eval con `fake` no queda fijado en un test.
 
 ## Paso 4 — Deploy y evidencia
 
@@ -60,8 +107,19 @@ Ajustes para que el stack corra en la VM gratis de Oracle, que es ARM (Ampere A1
   - Crear una VM A1 suele fallar con "out of host capacity". La región principal se elige al registrarse y no se puede cambiar.
   - La cuenta se queda en el plan gratis, sin pasar a Pay As You Go: así Oracle no puede cobrar nada.
   - **Por qué está en pausa.** El 2026-11-01, Oracle rechazó el registro de la cuenta gratis con un error genérico de su antifraude, aunque la tarjeta ya estaba verificada. Las alternativas sin Oracle tienen costo o trabajo: una VM barata, o un PC propio con Ubuntu Server y un túnel (Tailscale Funnel o Cloudflare Tunnel, porque muchas conexiones en Chile van detrás de CGNAT), que obliga a revisar cómo llega la IP del cliente al rate limit.
+  - Publicar el asistente espera el issue #81 y la autenticación (abajo), por los hallazgos de la auditoría del 2026-11-07 (Paso 3).
   - [x] **Tope diario global de llamadas al modelo** ([ADR-0024](adr/0024-tope-diario-de-llamadas-al-modelo.md), issue #65). El rate limit es por IP y por minuto, pero la cuota de Gemini es por proyecto y por día (500 solicitudes con Flash Lite), así que varios visitantes la podían agotar. Ahora hay un tope de 400 llamadas al modelo por día, contadas en Redis con la fecha de la hora del Pacífico, que es cuando Gemini reinicia su cuota. Se cuentan llamadas y no preguntas, porque una pregunta hace de 2 a 5. Pasado el tope, el asistente responde 503 sin llamar al modelo.
   - [x] **Un reintento ante fallas momentáneas de Gemini** (issue #65). En la prueba en vivo del 2026-11-01, Gemini respondió 503 a una pregunta, y la misma pregunta funcionó segundos después. `GeminiLlmClient` reintenta una vez, después de 1 s, cuando la API responde 500 o 503, siempre dentro de los 30 s de la pregunta. Un 429 (cuota agotada) no se reintenta.
+- [ ] **Autenticación: cada visitante ve solo sus pedidos.** Se decidió el 2026-11-08 y todavía no tiene issue: se crea cuando esté el diseño.
+
+  El problema: sin login, lo único que protege un pedido es que su UUID no se puede adivinar. El asistente rompe eso, porque sus citas y su texto nombran pedidos de cualquiera. Preguntando por franjas de tiempo se pueden enumerar todos y leerlos con `GET /v1/orders/{id}` o con `/timeline`. Reducir las citas no alcanza, porque el modelo puede escribir en su respuesta los IDs que le devuelve `search_orders`.
+
+  Primero va el diseño (software-architect, y después un ADR), que tiene que resolver:
+  - Cómo obtiene identidad un visitante: un login con Google, como en Monolith, o una sesión anónima que no pide nada.
+  - Qué cambia en `order-service`: el cliente sale del token y no del body, y `GET /v1/orders/{id}` revisa quién es el dueño.
+  - Qué cambia en el asistente: `/timeline` revisa el dueño, y las herramientas filtran por cliente.
+
+  El Paso 7 también lo necesita.
 - [ ] **Prueba de carga** (k6 o Locust): cientos de órdenes concurrentes sobre el mismo SKU, para mostrar que no hay sobreventa ([ADR-0007](adr/0007-reserva-de-stock-atomica.md)) y sacar el screenshot del dashboard de Grafana con tráfico real.
 - [ ] **GIF o video del flujo en el README**: crear un pedido, verlo pasar a `confirmed`, el email en Mailpit y el dashboard de Grafana. Es la evidencia que no depende de la VM: si Oracle la reclama o se cae, el README sigue mostrando la app funcionando. Se graba con el stack local, después de Mailpit (paso 2), y se vuelve a grabar cuando esté el asistente. El estilo visual lo elige el autor del repo antes de grabar.
 - [ ] **Guía de estudio del código** (`docs/guia-de-estudio.md`); ya no espera al deploy. Los ADRs explican cada decisión por separado; falta el recorrido que las une. Seguir un pedido desde `POST /v1/orders` hasta el email y la respuesta del asistente, y en cada paso decir qué archivo y qué función lo hace, qué patrón aplica, qué ADR lo explica y qué test lo prueba. Cerrar con las preguntas que una entrevista haría sobre el diseño (por qué no outbox todavía, qué pasa si se cae el broker, cómo se evita la sobreventa) y dónde está la respuesta en el repo. Sirve para estudiar el repo y para explicarlo.
@@ -100,4 +158,4 @@ Ajustes para que el stack corra en la VM gratis de Oracle, que es ARM (Ampere A1
 - **Tracing distribuido** con OpenTelemetry + Tempo (ya hay Grafana; el correlation ID de [ADR-0012](adr/0012-logging-json-y-correlation-id.md) es la base).
 - **Zona horaria del asistente.** El prompt lleva la hora en UTC, así que "hoy" es el día UTC: en Chile, después de las 21:00, ya es el día siguiente. Una variable como `ASSISTANT_TIME_ZONE=America/Santiago` que ponga la hora local, con su offset, en el prompt y en los rangos de las herramientas.
 - **Versión en los contratos** (`event_version` en `BaseEvent`) para poder evolucionar eventos sin romper consumers.
-- El resto de "Mejoras futuras" del [README](../README.md#mejoras-futuras-post-mvp): auth JWT en `order-service`, customer directory para el email real, idempotencia persistente en `notification-service`, Kubernetes.
+- El resto de "Mejoras futuras" del [README](../README.md#mejoras-futuras-post-mvp): customer directory para el email real, idempotencia persistente en `notification-service`, Kubernetes.

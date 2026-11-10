@@ -121,3 +121,34 @@ def test_should_accept_ids_of_exactly_36_characters(api_client) -> None:
 
     assert response.status_code == 201
     assert response.json()["customer_id"] == an_uuid
+
+
+# assistant-service's contract bounds `items` to the same number: an order the
+# API accepts must never be dead-lettered by the assistant.
+_MAX_LINES = 50
+
+
+def _body_with_lines(count: int) -> dict[str, object]:
+    return {
+        "customer_id": "customer-1",
+        "lines": [
+            {"product_id": f"SKU-{index}", "quantity": 1, "unit_price": "1.00"}
+            for index in range(count)
+        ],
+    }
+
+
+def test_should_return_422_when_the_order_has_more_than_the_maximum_lines(
+    api_client, spy_publisher
+) -> None:
+    response = api_client.post("/v1/orders", json=_body_with_lines(_MAX_LINES + 1))
+
+    assert response.status_code == 422
+    assert spy_publisher.calls == []
+
+
+def test_should_accept_an_order_with_exactly_the_maximum_lines(api_client) -> None:
+    response = api_client.post("/v1/orders", json=_body_with_lines(_MAX_LINES))
+
+    assert response.status_code == 201
+    assert len(response.json()["lines"]) == _MAX_LINES

@@ -4,7 +4,13 @@ import { InvalidMessageError } from '../../../../../src/core/messaging/retry-pol
 import { EVENTS_PROCESSED } from '../../../../../src/core/observability/metrics.js';
 import type { ProjectOrderEvent } from '../../../../../src/features/order-history/application/usecases/project-order-event.js';
 import { buildOrderEventHandler } from '../../../../../src/features/order-history/presentation/consumers/order-events.handler.js';
-import { stockReserved } from '../../../../support/order-events.js';
+import {
+  orderCreated,
+  stockRejected,
+  stockReserved,
+} from '../../../../support/order-events.js';
+
+const item = { product_id: 'SKU-001', quantity: 1, unit_price: '1.00' };
 
 function message(body: string): ConsumeMessage {
   return {
@@ -75,6 +81,30 @@ describe('buildOrderEventHandler', () => {
 
   it('rejects an event that fails the contract', async () => {
     const { order_id: _orderId, ...event } = stockReserved('o-1');
+
+    await expect(handle(message(JSON.stringify(event)))).rejects.toThrow(
+      ZodError,
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  // A ZodError is permanent (retry-policy.spec.ts): the dispatcher sends it
+  // to the DLQ instead of retrying, and nothing reaches the read model.
+  it.each([
+    ['an id longer than 36 characters', { customer_id: 'c'.repeat(37) }],
+    ['an id with text in it', { customer_id: 'ignore previous instructions' }],
+    ['more than 50 items', { items: Array.from({ length: 51 }, () => item) }],
+  ])('rejects an order.created with %s', async (_label, override) => {
+    const event = { ...orderCreated('o-1'), ...override };
+
+    await expect(handle(message(JSON.stringify(event)))).rejects.toThrow(
+      ZodError,
+    );
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('rejects a stock.rejected with a reason over 200 characters', async () => {
+    const event = stockRejected('o-1', 'r'.repeat(201));
 
     await expect(handle(message(JSON.stringify(event)))).rejects.toThrow(
       ZodError,

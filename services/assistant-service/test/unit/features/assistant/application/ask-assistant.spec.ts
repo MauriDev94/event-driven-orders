@@ -4,8 +4,14 @@ import {
   LlmUnavailableError,
 } from '../../../../../src/features/assistant/application/contracts/llm-client.js';
 import { ModelCallBudgetUnavailableError } from '../../../../../src/features/assistant/application/contracts/model-call-budget.js';
-import { buildOrderTools } from '../../../../../src/features/assistant/application/tools/order-tools.js';
-import { AskAssistant } from '../../../../../src/features/assistant/application/usecases/ask-assistant.js';
+import {
+  type AssistantTool,
+  buildOrderTools,
+} from '../../../../../src/features/assistant/application/tools/order-tools.js';
+import {
+  AskAssistant,
+  MAX_TOOL_OUTPUT_BYTES,
+} from '../../../../../src/features/assistant/application/usecases/ask-assistant.js';
 import { NO_DATA_ANSWER } from '../../../../../src/features/assistant/domain/grounding.js';
 import {
   answer,
@@ -189,6 +195,120 @@ describe('AskAssistant', () => {
       answer: 'No puedo hacer eso.',
       outcome: 'no_data',
       toolCalls: [{ name: 'delete_order', args: { order_id: orderId } }],
+    });
+  });
+
+  describe('size of a tool output', () => {
+    function oversizedOrders() {
+      const big = 'x'.repeat(Math.ceil(MAX_TOOL_OUTPUT_BYTES / 10));
+      return Array.from({ length: 20 }, () =>
+        orderSummary(randomUUID(), { rejectionReason: big }),
+      );
+    }
+
+    it('replaces an output over the byte cap with an error for the model', async () => {
+      queries.orders = oversizedOrders();
+      const llm = new ScriptedLlmClient([
+        callTools([{ id: 'c1', name: 'search_orders', args: {} }]),
+        answer('No pude leer los pedidos.'),
+      ]);
+
+      await assistant(llm).execute('lista los pedidos');
+
+      expect(llm.requests[1]?.messages.at(-1)).toEqual({
+        role: 'tool',
+        results: [
+          {
+            callId: 'c1',
+            name: 'search_orders',
+            output: { error: 'result too large, narrow the query' },
+          },
+        ],
+      });
+    });
+
+    it('records no evidence from a discarded output', async () => {
+      queries.orders = oversizedOrders();
+      const [first] = queries.orders;
+      const llm = new ScriptedLlmClient([
+        callTools([{ id: 'c1', name: 'search_orders', args: {} }]),
+        answer(`El pedido ${first?.orderId} esta rechazado.`),
+      ]);
+
+      const result = await assistant(llm).execute('lista los pedidos');
+
+      expect(result.outcome).toBe('ungrounded');
+      expect(result.citations).toEqual([]);
+    });
+
+    /** A tool whose output is `{"pad":"<pad>"}`: 10 bytes plus the pad. */
+    function padTool(pad: string): AssistantTool {
+      return {
+        spec: { name: 'pad', description: 'test', parameters: {} },
+        async run() {
+          return {
+            output: { pad },
+            evidence: [{ orderId, eventIds: [] }],
+          };
+        },
+      };
+    }
+
+    async function askWith(pad: string) {
+      expect(Buffer.byteLength(JSON.stringify({ pad }))).toBe(
+        10 + Buffer.byteLength(pad),
+      );
+      const llm = new ScriptedLlmClient([
+        callTools([{ id: 'c1', name: 'pad', args: {} }]),
+        answer(`El pedido ${orderId} esta rechazado.`),
+      ]);
+      const result = await new AskAssistant(
+        llm,
+        [padTool(pad)],
+        new StubModelCallBudget(),
+        { now },
+      ).execute('lista los pedidos');
+      return { llm, result };
+    }
+
+    it('lets an output of exactly the cap through, with its evidence', async () => {
+      const pad = 'x'.repeat(MAX_TOOL_OUTPUT_BYTES - 10);
+
+      const { llm, result } = await askWith(pad);
+
+      expect(llm.requests[1]?.messages.at(-1)).toMatchObject({
+        results: [{ output: { pad } }],
+      });
+      expect(result.outcome).toBe('answered');
+      expect(result.citations).toHaveLength(1);
+    });
+
+    it('replaces an output one byte over the cap, with no evidence', async () => {
+      const pad = 'x'.repeat(MAX_TOOL_OUTPUT_BYTES - 10 + 1);
+
+      const { llm, result } = await askWith(pad);
+
+      expect(llm.requests[1]?.messages.at(-1)).toMatchObject({
+        results: [{ output: { error: 'result too large, narrow the query' } }],
+      });
+      expect(result.outcome).toBe('ungrounded');
+      expect(result.citations).toEqual([]);
+    });
+
+    it('measures bytes, not characters: multibyte text over the cap is replaced', async () => {
+      // Half the cap in 2-byte characters: its UTF-16 length is far under
+      // the cap, its UTF-8 size is just over.
+      const pad = 'é'.repeat(MAX_TOOL_OUTPUT_BYTES / 2);
+      expect(JSON.stringify({ pad }).length).toBeLessThan(
+        MAX_TOOL_OUTPUT_BYTES,
+      );
+
+      const { llm, result } = await askWith(pad);
+
+      expect(llm.requests[1]?.messages.at(-1)).toMatchObject({
+        results: [{ output: { error: 'result too large, narrow the query' } }],
+      });
+      expect(result.citations).toEqual([]);
     });
   });
 

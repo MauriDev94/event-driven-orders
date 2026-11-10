@@ -17,6 +17,13 @@ import {
 import type { ModelCallBudget } from '../contracts/model-call-budget.js';
 import type { AssistantTool } from '../tools/order-tools.js';
 
+/**
+ * The most a single tool output may weigh once serialized (UTF-8 bytes of its
+ * JSON), about 8k tokens. The tools cap their own lists; this is the last
+ * resort that keeps one tool from filling the context of every later turn.
+ */
+export const MAX_TOOL_OUTPUT_BYTES = 32_768;
+
 export interface AskAssistantOptions {
   /** Model turns before giving up. */
   maxIterations?: number;
@@ -158,6 +165,14 @@ export class AskAssistant {
     const tool = this.tools.get(call.name);
     if (tool === undefined) return { error: `unknown tool ${call.name}` };
     const run = await tool.run(call.args);
+    // Measured before anything is recorded: a discarded output must leave no
+    // evidence, or the answer could cite what the model never saw.
+    if (
+      Buffer.byteLength(JSON.stringify(run.output), 'utf8') >
+      MAX_TOOL_OUTPUT_BYTES
+    ) {
+      return { error: 'result too large, narrow the query' };
+    }
     for (const { orderId, eventIds } of run.evidence) {
       evidence.add(orderId, eventIds);
     }

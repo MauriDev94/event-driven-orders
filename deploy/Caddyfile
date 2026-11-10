@@ -23,7 +23,16 @@
 # se publica /v1/assistant/*: su /health y su /metrics no salen a internet.
 # Caddy reemplaza el X-Forwarded-For que mande el cliente por su IP real, y el
 # asistente lo lee con TRUST_PROXY=uniquelocal para el rate limit (ADR-0023).
+#
+# request_body corta en Caddy cualquier body de más de 64 000 bytes (KB es SI,
+# no KiB), con 413 y sin pasarlo al servicio, aunque venga chunked sin
+# Content-Length. uvicorn no limita el body (el de Express, en el asistente,
+# corta recién en 100 kb), y el pedido válido más grande queda muy por debajo
+# de ese tope (issue #80).
 {$DOMAIN} {
+	request_body {
+		max_size 64KB
+	}
 	handle /v1/assistant/* {
 		reverse_proxy assistant-service:8000
 	}
