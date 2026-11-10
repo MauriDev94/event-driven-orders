@@ -1,18 +1,11 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+from app.common.identifiers import ID_MAX_LENGTH, ID_PATTERN
 
 # Request/response contracts for the orders HTTP API.
-
-# Customer and product ids are plain identifiers, never free text. They flow
-# into varchar(36) columns, into every event, into the recipient address that
-# notification-service builds (``<customer_id>@example.com``) and, through
-# assistant-service's read model, into what the LLM reads. Rejecting anything
-# else here keeps prompt-injection text out of the model's context and turns
-# an oversized id into a 422 instead of a database error.
-ID_MAX_LENGTH = 36
-ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9._-]*$"
 
 # Lines per order. assistant-service bounds `items` of order.created to the same
 # number, so an order accepted here is never dead-lettered there; raise both
@@ -22,13 +15,18 @@ MAX_ORDER_LINES = 50
 
 
 class OrderLineRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     product_id: str = Field(..., min_length=1, max_length=ID_MAX_LENGTH, pattern=ID_PATTERN)
     quantity: int = Field(..., gt=0)
     unit_price: Decimal = Field(..., ge=0)
 
 
 class CreateOrderRequest(BaseModel):
-    customer_id: str = Field(..., min_length=1, max_length=ID_MAX_LENGTH, pattern=ID_PATTERN)
+    # The customer is the token's `sub`, never a body field (ADR-0027):
+    # sending `customer_id` is a 422.
+    model_config = ConfigDict(extra="forbid")
+
     lines: list[OrderLineRequest] = Field(..., min_length=1, max_length=MAX_ORDER_LINES)
 
 

@@ -35,6 +35,17 @@ class SqlAlchemyOrderRepository(OrderRepository):
             raise DatabaseError("failed to retrieve order") from exc
         return map_order_model_to_entity(model) if model is not None else None
 
+    def get_by_id_for_customer(self, order_id: str, customer_id: str) -> Order | None:
+        try:
+            model = (
+                self.session.query(OrderModel)
+                .filter(OrderModel.id == order_id, OrderModel.customer_id == customer_id)
+                .first()
+            )
+        except SQLAlchemyError as exc:
+            raise DatabaseError("failed to retrieve order") from exc
+        return map_order_model_to_entity(model) if model is not None else None
+
     def update(self, order: Order) -> Order:
         if order.id is None:
             raise NotFoundError("order not found")

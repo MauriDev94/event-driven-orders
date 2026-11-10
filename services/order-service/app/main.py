@@ -28,6 +28,7 @@ from app.features.orders.presentation.consumers.inventory_results_consumer impor
     build_inventory_result_handler,
 )
 from app.features.orders.presentation.http.router import router as orders_router
+from app.features.session.presentation.http.router import router as session_router
 
 logger = logging.getLogger(__name__)
 
@@ -105,6 +106,7 @@ Instrumentator().instrument(app).expose(app)
 
 app.middleware("http")(correlation_id_middleware)
 register_exception_handlers(app)
+app.include_router(session_router)
 app.include_router(orders_router)
 
 

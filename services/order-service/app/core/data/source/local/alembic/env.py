@@ -19,7 +19,7 @@ if not database_url:
 
     _cfg = EnvConfig()
     database_url = (
-        f"postgresql+psycopg2://{_cfg.db_user}:{_cfg.db_password}"
+        f"postgresql+psycopg2://{_cfg.db_user}:{_cfg.db_password.get_secret_value()}"
         f"@{_cfg.db_host}:{_cfg.db_port}/{_cfg.db_name}"
     )
 

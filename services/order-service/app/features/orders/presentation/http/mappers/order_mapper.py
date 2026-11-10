@@ -16,9 +16,9 @@ from app.features.orders.presentation.http.schemas.order_schemas import (
 )
 
 
-def to_create_params(request: CreateOrderRequest) -> CreateOrderParams:
+def to_create_params(request: CreateOrderRequest, customer_id: str) -> CreateOrderParams:
     return CreateOrderParams(
-        customer_id=request.customer_id,
+        customer_id=customer_id,
         lines=[
             CreateOrderLineParams(
                 product_id=line.product_id,

@@ -14,7 +14,7 @@ class Database:
         url = URL.create(
             drivername="postgresql+psycopg2",
             username=config.db_user,
-            password=config.db_password,
+            password=config.db_password.get_secret_value(),
             host=config.db_host,
             port=config.db_port,
             database=config.db_name,
