@@ -116,7 +116,7 @@ services:
     command:
       - sh
       - -c
-      - exec redis-server --requirepass "$$REDIS_PASSWORD" --save '' --appendonly no --maxmemory 64mb --maxmemory-policy allkeys-lru
+      - exec redis-server --requirepass "$$REDIS_PASSWORD" --save '' --appendonly no --maxmemory 64mb --maxmemory-policy volatile-ttl
     ports:
       - "${REDIS_PORT}:6379"
     healthcheck:
@@ -225,6 +225,10 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-fake}
       LLM_MODEL: ${LLM_MODEL:-gemini-3.5-flash-lite}
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      ASK_RATE_LIMIT_PER_MINUTE: ${ASK_RATE_LIMIT_PER_MINUTE:-5}
+      LLM_DAILY_CALL_LIMIT: ${LLM_DAILY_CALL_LIMIT:-400}
+      LLM_MINUTE_CALL_LIMIT: ${LLM_MINUTE_CALL_LIMIT:-15}
+      TIMELINE_RATE_LIMIT_PER_MINUTE: ${TIMELINE_RATE_LIMIT_PER_MINUTE:-120}
     ports:
       - "8004:8000"
     depends_on:

@@ -51,9 +51,10 @@ Un ADR no se reescribe cuando la realidad cambia: se marca como `Superseded by A
 |---|---|---|
 | [0021](0021-assistant-service-en-typescript.md) | `assistant-service` en TypeScript/NestJS: contratos zod verificados contra fixtures de Pydantic, `amqplib` con recovery nativo, Prisma 7 | Aceptada |
 | [0022](0022-asistente-con-agente-y-herramientas-de-solo-lectura.md) | Asistente con un agente y herramientas de solo lectura sobre Gemini: loop en la aplicación, citas armadas en el servidor y verificación de IDs, `fake` por defecto | Aceptada · Parcialmente reemplazada por [ADR-0025](0025-verificacion-de-hechos-y-filtracion-del-prompt.md) |
-| [0023](0023-redis-rate-limit-y-cache-del-timeline.md) | Redis para el rate limit del asistente (falla cerrado) y una caché del timeline invalidada por eventos, con contador de generación (falla abierta) | Aceptada |
-| [0024](0024-tope-diario-de-llamadas-al-modelo.md) | Tope diario de llamadas al modelo en Redis, contado por día del Pacífico (cuando Gemini reinicia su cuota), y un reintento ante un 500 o 503 | Aceptada |
+| [0023](0023-redis-rate-limit-y-cache-del-timeline.md) | Redis para el rate limit del asistente (falla cerrado) y una caché del timeline invalidada por eventos, con contador de generación (falla abierta) | Aceptada · Parcialmente reemplazada por [ADR-0026](0026-redis-compartido-ttl-y-topes.md) |
+| [0024](0024-tope-diario-de-llamadas-al-modelo.md) | Tope diario de llamadas al modelo en Redis, contado por día del Pacífico (cuando Gemini reinicia su cuota), y un reintento ante un 500 o 503 | Aceptada · Parcialmente reemplazada por [ADR-0026](0026-redis-compartido-ttl-y-topes.md) |
 | [0025](0025-verificacion-de-hechos-y-filtracion-del-prompt.md) | Verificación de IDs, montos (por valor, en centavos) y SKU contra lo que devolvieron las herramientas, reemplazo de una respuesta que repite 8 palabras del prompt (`leaked`) y los cinco `outcome` como contrato de la API | Aceptada |
+| [0026](0026-redis-compartido-ttl-y-topes.md) | Un Redis compartido con `volatile-ttl`: toda clave con TTL, tope de tamaño en la caché, rate limit en el timeline y tope global de 15 llamadas por minuto | Aceptada |
 
 ### Testing y build
 

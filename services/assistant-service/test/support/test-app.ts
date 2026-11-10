@@ -29,6 +29,9 @@ export async function createTestApp(
     RABBITMQ_URL: 'amqp://broker@localhost:5672/',
     REDIS_URL: inject('redisUrl'),
     LOG_LEVEL: 'silent',
+    // The real budget is shared by every test file in the run, so the
+    // per-minute cap stays out of the way unless a test lowers it.
+    LLM_MINUTE_CALL_LIMIT: '1000',
     ...options.env,
   });
   let builder = Test.createTestingModule({ imports: [AppModule] })

@@ -101,6 +101,68 @@ describe('RedisTimelineCache', () => {
     expect(next?.events).toHaveLength(2);
   });
 
+  describe('size cap', () => {
+    function big(orderId: string, bytes: number, char = 'x'): OrderTimeline {
+      const stored = timeline(orderId, 1);
+      stored.events[0]!.payload = { blob: char.repeat(bytes) };
+      return stored;
+    }
+
+    it('serves an oversized timeline from the database every time and never stores it', async () => {
+      const orderId = randomUUID();
+      const load = vi.fn(async () => big(orderId, 70_000));
+
+      const first = await cache.getOrLoad(orderId, load);
+      await cache.getOrLoad(orderId, load);
+
+      expect(first?.events).toHaveLength(1);
+      expect(load).toHaveBeenCalledTimes(2);
+      expect(await redis.client.exists(`order-timeline:${orderId}`)).toBe(0);
+    });
+
+    it('still caches an entry under the cap', async () => {
+      const orderId = randomUUID();
+      const load = vi.fn(async () => big(orderId, 20_000));
+
+      await cache.getOrLoad(orderId, load);
+      await cache.getOrLoad(orderId, load);
+
+      expect(load).toHaveBeenCalledTimes(1);
+    });
+
+    it('measures the cap in UTF-8 bytes, not characters', async () => {
+      const small = new RedisTimelineCache(redis, { maxEntryBytes: 1_500 });
+      const orderId = randomUUID();
+      // 700 characters but 1400 bytes of payload, plus the rest of the entry.
+      const load = vi.fn(async () => big(orderId, 700, 'ñ'));
+      const asciiId = randomUUID();
+      const asciiLoad = vi.fn(async () => big(asciiId, 700));
+
+      await small.getOrLoad(orderId, load);
+      await small.getOrLoad(orderId, load);
+      await small.getOrLoad(asciiId, asciiLoad);
+      await small.getOrLoad(asciiId, asciiLoad);
+
+      expect(load).toHaveBeenCalledTimes(2);
+      expect(asciiLoad).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps the generation protocol when it skips the write', async () => {
+      const orderId = randomUUID();
+      await cache.invalidate(orderId);
+
+      await cache.getOrLoad(orderId, async () => big(orderId, 70_000));
+      const next = await cache.getOrLoad(orderId, async () =>
+        timeline(orderId, 2),
+      );
+
+      expect(next?.events).toHaveLength(2);
+      expect(
+        await redis.client.get(`order-timeline:${orderId}:generation`),
+      ).toBe('1');
+    });
+  });
+
   it('lets entries expire', async () => {
     const shortLived = new RedisTimelineCache(redis, { ttlSeconds: 1 });
     const orderId = randomUUID();

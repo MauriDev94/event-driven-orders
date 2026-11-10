@@ -61,13 +61,7 @@ Ajustes para que el stack corra en la VM gratis de Oracle, que es ARM (Ampere A1
   - [x] `order-history` es el único dueño de `order_view`, y el resumen de rechazos se agrupa en SQL, así que los conteos por motivo son exactos (issue #79).
   - [x] **Tope al contexto que el asistente le manda al modelo** (issue #80). Es el único hallazgo alto. Nada limitaba lo que devuelven las herramientas, y `POST /v1/orders` aceptaba cualquier cantidad de líneas. Un visitante podía inflar el contexto de cada pregunta hasta que Gemini respondiera 429 o 400 y el asistente quedara en 503. Ahora las listas tienen tope, cada salida tiene un tope de bytes, un pedido tiene como máximo 50 líneas, Caddy corta los bodies de más de 64 000 bytes y `customer_id` ya no llega al modelo.
   - [ ] **Contratos acotados de punta a punta** (issue #97, de la revisión de #80). Los límites de los contratos están copiados a mano en order-service y en el zod del asistente, y `shared/contracts` no tiene ninguno. Además, `unit_price` acepta cualquier cantidad de decimales: la base guarda el precio redondeado, pero el evento lo lleva sin redondear. `quantity` no tiene máximo: sobre el límite de la columna, la API responde 500. Y `X-Correlation-ID` llega a los eventos sin validar.
-  - [ ] **Redis protege el presupuesto diario** (issue #81). Hoy, llenar la caché del timeline puede hacer que Redis expulse el contador diario de llamadas al modelo, que entonces vuelve a cero. El arreglo:
-    - un tope de tamaño por entrada de caché;
-    - rate limit en `/timeline`;
-    - la política `volatile-ttl`;
-    - un tope global de llamadas por minuto.
-
-    Lleva un ADR-0026 que modifica ADR-0023. Bloquea publicar el asistente.
+  - [x] **Redis protege el presupuesto diario** ([ADR-0026](adr/0026-redis-compartido-ttl-y-topes.md), issue #81). Llenar la caché del timeline podía hacer que Redis expulsara el contador diario de llamadas al modelo, que entonces volvía a cero. Ahora Redis usa `volatile-ttl` y toda clave tiene TTL (un test de integración lo comprueba), una entrada de caché de más de 64 KB no se guarda, `/timeline` tiene un rate limit de 120 por minuto por IP que falla abierto, y hay un tope global de 15 llamadas al modelo por minuto, tomado junto con el diario en un script Lua. El ADR modifica ADR-0023.
   - [ ] Robustez del loop del agente (issue #82):
     - una fecha imposible como `2026-13-01` da 500;
     - el tope de 30 s no cubre las herramientas;
@@ -107,7 +101,7 @@ Ajustes para que el stack corra en la VM gratis de Oracle, que es ARM (Ampere A1
   - Crear una VM A1 suele fallar con "out of host capacity". La región principal se elige al registrarse y no se puede cambiar.
   - La cuenta se queda en el plan gratis, sin pasar a Pay As You Go: así Oracle no puede cobrar nada.
   - **Por qué está en pausa.** El 2026-11-01, Oracle rechazó el registro de la cuenta gratis con un error genérico de su antifraude, aunque la tarjeta ya estaba verificada. Las alternativas sin Oracle tienen costo o trabajo: una VM barata, o un PC propio con Ubuntu Server y un túnel (Tailscale Funnel o Cloudflare Tunnel, porque muchas conexiones en Chile van detrás de CGNAT), que obliga a revisar cómo llega la IP del cliente al rate limit.
-  - Publicar el asistente espera el issue #81 y la autenticación (abajo), por los hallazgos de la auditoría del 2026-11-07 (Paso 3).
+  - Publicar el asistente espera la autenticación (abajo), por los hallazgos de la auditoría del 2026-11-07 (Paso 3).
   - [x] **Tope diario global de llamadas al modelo** ([ADR-0024](adr/0024-tope-diario-de-llamadas-al-modelo.md), issue #65). El rate limit es por IP y por minuto, pero la cuota de Gemini es por proyecto y por día (500 solicitudes con Flash Lite), así que varios visitantes la podían agotar. Ahora hay un tope de 400 llamadas al modelo por día, contadas en Redis con la fecha de la hora del Pacífico, que es cuando Gemini reinicia su cuota. Se cuentan llamadas y no preguntas, porque una pregunta hace de 2 a 5. Pasado el tope, el asistente responde 503 sin llamar al modelo.
   - [x] **Un reintento ante fallas momentáneas de Gemini** (issue #65). En la prueba en vivo del 2026-11-01, Gemini respondió 503 a una pregunta, y la misma pregunta funcionó segundos después. `GeminiLlmClient` reintenta una vez, después de 1 s, cuando la API responde 500 o 503, siempre dentro de los 30 s de la pregunta. Un 429 (cuota agotada) no se reintenta.
 - [ ] **Autenticación: cada visitante ve solo sus pedidos.** Se decidió el 2026-11-08 y todavía no tiene issue: se crea cuando esté el diseño.

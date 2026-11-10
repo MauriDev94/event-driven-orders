@@ -26,6 +26,16 @@ const envSchema = z
     ASK_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(5),
     // Model calls per day, below the free tier's daily quota (ADR-0024).
     LLM_DAILY_CALL_LIMIT: z.coerce.number().int().positive().default(400),
+    // Model calls per minute across all clients, at Gemini's free-tier limit
+    // for the default model (ADR-0026).
+    LLM_MINUTE_CALL_LIMIT: z.coerce.number().int().positive().default(15),
+    // Timeline reads per IP per minute. Fails open, so it only has to stop a
+    // loop; the e2e suite polls once a second from one IP (ADR-0026).
+    TIMELINE_RATE_LIMIT_PER_MINUTE: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(120),
     // Express `trust proxy`: which proxies may set X-Forwarded-For. `false`
     // uses the socket address; behind Caddy, `uniquelocal` (its private IP).
     TRUST_PROXY: z

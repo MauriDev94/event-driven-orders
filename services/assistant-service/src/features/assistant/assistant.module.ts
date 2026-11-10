@@ -6,14 +6,14 @@ import { OrderHistoryModule } from '../order-history/order-history.module.js';
 import { LlmClient } from './application/contracts/llm-client.js';
 import { ModelCallBudget } from './application/contracts/model-call-budget.js';
 import { OrderQueries } from './application/contracts/order-queries.js';
-import { RateLimiter } from './application/contracts/rate-limiter.js';
+import { RateLimiter } from '../../core/rate-limit/rate-limiter.js';
 import { buildOrderTools } from './application/tools/order-tools.js';
 import { AskAssistant } from './application/usecases/ask-assistant.js';
 import { FakeLlmClient } from './infrastructure/fake-llm.client.js';
 import { GeminiLlmClient } from './infrastructure/gemini-llm.client.js';
 import { ReadModelOrderQueries } from './infrastructure/read-model-order-queries.js';
 import { RedisModelCallBudget } from './infrastructure/redis-model-call-budget.js';
-import { RedisRateLimiter } from './infrastructure/redis-rate-limiter.js';
+import { RedisRateLimiter } from '../../core/rate-limit/redis-rate-limiter.js';
 import { AskRateLimitGuard } from './presentation/http/ask-rate-limit.guard.js';
 import { AssistantController } from './presentation/http/assistant.controller.js';
 
@@ -36,7 +36,10 @@ function createLlmClient(env: Env): LlmClient {
     {
       provide: ModelCallBudget,
       useFactory: (redis: RedisConnection, env: Env) =>
-        new RedisModelCallBudget(redis, { limit: env.LLM_DAILY_CALL_LIMIT }),
+        new RedisModelCallBudget(redis, {
+          limit: env.LLM_DAILY_CALL_LIMIT,
+          perMinuteLimit: env.LLM_MINUTE_CALL_LIMIT,
+        }),
       inject: [RedisConnection, ENV],
     },
     {

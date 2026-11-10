@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { inject } from 'vitest';
-import { RedisConnection } from '../../../../src/core/cache/redis.connection.js';
-import { RateLimiterUnavailableError } from '../../../../src/features/assistant/application/contracts/rate-limiter.js';
-import { RedisRateLimiter } from '../../../../src/features/assistant/infrastructure/redis-rate-limiter.js';
+import { RedisConnection } from '../../../src/core/cache/redis.connection.js';
+import { RateLimiterUnavailableError } from '../../../src/core/rate-limit/rate-limiter.js';
+import { RedisRateLimiter } from '../../../src/core/rate-limit/redis-rate-limiter.js';
 
 // Against a real Redis: the counter and its expiry run in one MULTI.
 describe('RedisRateLimiter', () => {

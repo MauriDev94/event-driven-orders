@@ -9,7 +9,13 @@ import { OrderView, type OrderViewState } from '../domain/order-view.js';
 
 export interface RedisTimelineCacheOptions {
   ttlSeconds?: number;
+  /** Largest serialized entry (UTF-8 bytes) worth storing. */
+  maxEntryBytes?: number;
 }
+
+// Visitors control how big a timeline gets, and the shared Redis has 64 MB
+// (ADR-0026): a bigger entry is served from the database, never stored.
+const DEFAULT_MAX_ENTRY_BYTES = 64 * 1024;
 
 interface Entry {
   /** The order's invalidation count when the timeline was read. */
@@ -32,6 +38,7 @@ interface Entry {
 export class RedisTimelineCache extends TimelineCache {
   private readonly logger = new Logger(RedisTimelineCache.name);
   private readonly ttlSeconds: number;
+  private readonly maxEntryBytes: number;
   /** Outlives every entry stored under it, so a reset can't match one. */
   private readonly generationTtlSeconds: number;
 
@@ -41,6 +48,7 @@ export class RedisTimelineCache extends TimelineCache {
   ) {
     super();
     this.ttlSeconds = options.ttlSeconds ?? 60;
+    this.maxEntryBytes = options.maxEntryBytes ?? DEFAULT_MAX_ENTRY_BYTES;
     this.generationTtlSeconds = this.ttlSeconds * 10;
   }
 
@@ -71,8 +79,13 @@ export class RedisTimelineCache extends TimelineCache {
         generation,
         timeline: { view: timeline.view.toState(), events: timeline.events },
       };
+      const serialized = JSON.stringify(entry);
+      if (Buffer.byteLength(serialized) > this.maxEntryBytes) {
+        this.logger.debug(`timeline of ${orderId} is too big to cache`);
+        return timeline;
+      }
       try {
-        await this.redis.client.set(entryKey, JSON.stringify(entry), {
+        await this.redis.client.set(entryKey, serialized, {
           EX: this.ttlSeconds,
         });
       } catch (error) {

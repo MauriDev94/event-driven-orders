@@ -1,6 +1,6 @@
 # ADR-0024 — Tope diario de llamadas al modelo, contado por día del Pacífico
 
-**Estado:** Aceptada · **Fecha:** 2026-11-01 · **Ámbito:** `assistant-service` (`POST /v1/assistant/ask`)
+**Estado:** Aceptada · Parcialmente reemplazada por [ADR-0026](0026-redis-compartido-ttl-y-topes.md) · **Fecha:** 2026-11-01 · **Ámbito:** `assistant-service` (`POST /v1/assistant/ask`)
 
 ## Contexto
 

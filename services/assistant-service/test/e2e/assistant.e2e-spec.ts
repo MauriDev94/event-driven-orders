@@ -194,6 +194,33 @@ describe('assistant HTTP API', () => {
       }
     });
 
+    it('answers 503 without calling the model once the per-minute cap of model calls is spent', async () => {
+      // Real budget in Redis, shared with the other tests: with a cap of 1,
+      // only the later questions of the minute are sure to find it spent.
+      const llm = new ScriptedLlmClient([
+        answer('hola'),
+        answer('hola'),
+        answer('hola'),
+      ]);
+      const limited = await createTestApp({
+        databaseUrl: database.url,
+        env: { LLM_MINUTE_CALL_LIMIT: '1', TRUST_PROXY: 'loopback' },
+        llm,
+      });
+      try {
+        await ask(limited, { question: 'hola' });
+        await ask(limited, { question: 'hola' });
+        const response = await ask(limited, { question: 'hola' }).expect(503);
+
+        expect(response.body).toEqual({
+          message: 'the assistant ran out of model quota, try again later',
+        });
+        expect(llm.requests.length).toBeLessThanOrEqual(2);
+      } finally {
+        await limited.close();
+      }
+    });
+
     it('answers 503 when the daily budget cannot be checked', async () => {
       const failing = await createTestApp({
         databaseUrl: database.url,
@@ -240,6 +267,55 @@ describe('assistant HTTP API', () => {
   });
 
   describe('GET /v1/assistant/orders/:orderId/timeline', () => {
+    it('answers 429 with Retry-After past the per-IP limit, apart from the ask limit', async () => {
+      const limited = await createTestApp({
+        databaseUrl: database.url,
+        env: {
+          TIMELINE_RATE_LIMIT_PER_MINUTE: '2',
+          TRUST_PROXY: 'loopback',
+        },
+      });
+      const ip = randomIp();
+      const timeline = (from = ip) =>
+        request(limited.getHttpServer())
+          .get(`/v1/assistant/orders/${randomUUID()}/timeline`)
+          .set('X-Forwarded-For', from);
+      try {
+        await timeline().expect(404);
+        await timeline().expect(404);
+        const refused = await timeline().expect(429);
+
+        expect(refused.body).toEqual({
+          message: 'too many requests, try again later',
+        });
+        expect(Number(refused.headers['retry-after'])).toBeGreaterThan(0);
+        await timeline(randomIp()).expect(404);
+        await ask(limited, { question: 'hola' }, ip).expect(200);
+      } finally {
+        await limited.close();
+      }
+    });
+
+    it('does not limit the timeline when Redis is down (fails open)', async () => {
+      const noRedis = await createTestApp({
+        databaseUrl: database.url,
+        env: {
+          REDIS_URL: 'redis://127.0.0.1:1/0',
+          TIMELINE_RATE_LIMIT_PER_MINUTE: '1',
+          TRUST_PROXY: 'loopback',
+        },
+      });
+      try {
+        for (let i = 0; i < 2; i++) {
+          await request(noRedis.getHttpServer())
+            .get('/v1/assistant/orders/missing/timeline')
+            .expect(404);
+        }
+      } finally {
+        await noRedis.close();
+      }
+    }, 30_000);
+
     it('shows a new event right away, though the timeline is cached', async () => {
       const orderId = randomUUID();
       const project = app.get(ProjectOrderEvent);
