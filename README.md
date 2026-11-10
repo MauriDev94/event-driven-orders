@@ -507,8 +507,9 @@ Las más significativas:
 | [0022](docs/adr/0022-asistente-con-agente-y-herramientas-de-solo-lectura.md) | Agente LLM con herramientas de solo lectura | El modelo no puede cambiar nada ni inventar un pedido: las citas salen de las herramientas, no del texto |
 | [0023](docs/adr/0023-redis-rate-limit-y-cache-del-timeline.md) | Redis: rate limit que falla cerrado y caché que falla abierta | La cuota del modelo queda protegida aunque Redis se caiga, y la invalidación por eventos no deja leer un timeline viejo |
 | [0024](docs/adr/0024-tope-diario-de-llamadas-al-modelo.md) | Tope diario de llamadas al modelo, por día del Pacífico | Muchos visitantes juntos no agotan la cuota gratis de Gemini: el servicio corta antes que Google |
+| [0025](docs/adr/0025-verificacion-de-hechos-y-filtracion-del-prompt.md) | Verificación de montos y SKU, y reemplazo de una respuesta que copia el prompt (`leaked`) | Un monto inventado o una regla del prompt copiada no llegan al cliente como `answered` |
 
-**[Ver los 24 ADRs →](docs/adr/README.md)**
+**[Ver los 25 ADRs →](docs/adr/README.md)**
 
 ---
 
