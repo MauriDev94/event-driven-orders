@@ -1,7 +1,8 @@
 """Create the environment file for docker compose from a committed template.
 
 Every empty ``*_PASS`` / ``*_PASSWORD`` value in the template gets a random
-URL-safe secret (it also goes into the AMQP URL compose builds); every other
+URL-safe secret (it also goes into the AMQP URL compose builds), and every
+empty ``*_SECRET`` a signing key of at least 32 bytes; every other
 line is copied as is. The generated secrets are never printed.
 
     python scripts/generate_env.py                    # .env.example -> .env
@@ -25,6 +26,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SECRET_KEY = re.compile(r"^[A-Z0-9_]*_PASS(WORD)?$")
+# Signing keys (AUTH_TOKEN_SECRET, ADR-0027). The services refuse fewer than 32
+# bytes; token_urlsafe(n) gives about 1.3 * n characters, so this is 43.
+SIGNING_KEY = re.compile(r"^[A-Z0-9_]*_SECRET$")
+SIGNING_KEY_BYTES = 32
 
 
 def _key(line: str) -> str | None:
@@ -40,8 +45,11 @@ def render(template: str) -> str:
     lines = []
     for line in template.splitlines():
         key = _key(line)
-        if key is not None and SECRET_KEY.match(key) and not line.partition("=")[2].strip():
-            line = f"{key}={secrets.token_urlsafe(24)}"
+        if key is not None and not line.partition("=")[2].strip():
+            if SECRET_KEY.match(key):
+                line = f"{key}={secrets.token_urlsafe(24)}"
+            elif SIGNING_KEY.match(key):
+                line = f"{key}={secrets.token_urlsafe(SIGNING_KEY_BYTES)}"
         lines.append(line)
     return "\n".join(lines) + "\n"
 
