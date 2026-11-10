@@ -13,6 +13,7 @@ assignees: ""
 - [ ] `order-service`
 - [ ] `inventory-service`
 - [ ] `notification-service`
+- [ ] `assistant-service`
 - [ ] `shared/contracts`
 - [ ] Infra / CI
 
@@ -22,6 +23,8 @@ assignees: ""
 ## Criterios de aceptación
 - [ ] TDD: tests primero
 - [ ] Cambio aislado en la(s) capa(s) correcta(s)
-- [ ] `ruff check .` + `ruff format --check .` + `mypy app` en verde
-- [ ] `pytest -q` en verde
+- [ ] Servicios Python: `ruff check .` + `ruff format --check .` + `mypy app` en verde
+- [ ] Servicios Python: `pytest -q` en verde
+- [ ] `assistant-service`: `npm run lint` + `npm run typecheck` + `npm run format:check` en verde
+- [ ] `assistant-service`: `npm run test:cov` en verde
 - [ ] Commit con conventional commits (en español)

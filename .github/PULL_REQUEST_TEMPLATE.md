@@ -11,6 +11,7 @@ _Qué hace este PR, en 2-3 líneas._
 - [ ] `order-service`
 - [ ] `inventory-service`
 - [ ] `notification-service`
+- [ ] `assistant-service`
 - [ ] `shared/contracts` (integration events)
 - [ ] Infra / CI (docker-compose, `.github/`, Makefile)
 
@@ -26,6 +27,7 @@ _Qué hace este PR, en 2-3 líneas._
 - [ ] Type checking pasa: `mypy app`
 - [ ] Tests pasan: `pytest -q` → N passed, 0 failed
 - [ ] Coverage no baja del gate del servicio (`fail_under` en `pyproject.toml`)
+- [ ] `assistant-service` (en vez de los 4 anteriores): `npm run lint && npm run typecheck && npm run format:check` y `npm run test:cov`
 - [ ] Sin lógica de negocio en routers/consumers (presentación delgada)
 - [ ] DIP: sin imports de SQLAlchemy ni `aio_pika` en `application/` ni `domain/`
 - [ ] Los use cases hablan con el puerto `EventPublisher`, no con el broker directo

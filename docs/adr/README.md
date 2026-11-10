@@ -2,7 +2,7 @@
 
 Registro de las decisiones de arquitectura de **Event-Driven Orders**. Una decisión por archivo, con el contexto que la motivó, las alternativas evaluadas y sus consecuencias — **incluidas las limitaciones aceptadas**.
 
-Un ADR no se reescribe cuando la realidad cambia: se marca como `Superseded by ADR-XXXX` y se escribe uno nuevo. El historial de por qué se decidió algo es tan valioso como la decisión misma.
+Un ADR no se reescribe cuando la realidad cambia: se marca como `Superseded by ADR-XXXX` (o `Aceptada · Parcialmente reemplazada por ADR-XXXX` si solo cambia una parte) y se escribe uno nuevo. El historial de por qué se decidió algo es tan valioso como la decisión misma.
 
 ## Índice
 
@@ -50,9 +50,10 @@ Un ADR no se reescribe cuando la realidad cambia: se marca como `Superseded by A
 | ADR | Decisión | Estado |
 |---|---|---|
 | [0021](0021-assistant-service-en-typescript.md) | `assistant-service` en TypeScript/NestJS: contratos zod verificados contra fixtures de Pydantic, `amqplib` con recovery nativo, Prisma 7 | Aceptada |
-| [0022](0022-asistente-con-agente-y-herramientas-de-solo-lectura.md) | Asistente con un agente y herramientas de solo lectura sobre Gemini: loop en la aplicación, citas armadas en el servidor y verificación de IDs, `fake` por defecto | Aceptada |
+| [0022](0022-asistente-con-agente-y-herramientas-de-solo-lectura.md) | Asistente con un agente y herramientas de solo lectura sobre Gemini: loop en la aplicación, citas armadas en el servidor y verificación de IDs, `fake` por defecto | Aceptada · Parcialmente reemplazada por [ADR-0025](0025-verificacion-de-hechos-y-filtracion-del-prompt.md) |
 | [0023](0023-redis-rate-limit-y-cache-del-timeline.md) | Redis para el rate limit del asistente (falla cerrado) y una caché del timeline invalidada por eventos, con contador de generación (falla abierta) | Aceptada · Parcialmente reemplazada por [ADR-0026](0026-redis-compartido-ttl-y-topes.md) |
 | [0024](0024-tope-diario-de-llamadas-al-modelo.md) | Tope diario de llamadas al modelo en Redis, contado por día del Pacífico (cuando Gemini reinicia su cuota), y un reintento ante un 500 o 503 | Aceptada · Parcialmente reemplazada por [ADR-0026](0026-redis-compartido-ttl-y-topes.md) |
+| [0025](0025-verificacion-de-hechos-y-filtracion-del-prompt.md) | Verificación de IDs, montos (por valor, en centavos) y SKU contra lo que devolvieron las herramientas, reemplazo de una respuesta que repite 8 palabras del prompt (`leaked`) y los cinco `outcome` como contrato de la API | Aceptada |
 | [0026](0026-redis-compartido-ttl-y-topes.md) | Un Redis compartido con `volatile-ttl`: toda clave con TTL, tope de tamaño en la caché, rate limit en el timeline y tope global de 15 llamadas por minuto | Aceptada |
 
 ### Testing y build
@@ -73,7 +74,7 @@ Cada ADR sigue la misma estructura:
 ```markdown
 # ADR-XXXX — Título en una línea
 
-**Estado:** Aceptada | Aceptada (MVP) | Superseded by ADR-YYYY · **Fecha:** YYYY-MM-DD · **Ámbito:** servicios afectados
+**Estado:** Aceptada | Aceptada (MVP) | Aceptada · Parcialmente reemplazada por ADR-YYYY | Superseded by ADR-YYYY · **Fecha:** YYYY-MM-DD · **Ámbito:** servicios afectados
 
 ## Contexto      ← el problema y por qué la solución obvia no sirve
 ## Decisión      ← qué se hizo, con el detalle técnico
