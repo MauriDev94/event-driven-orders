@@ -21,10 +21,13 @@ fixtures and run independently in both environments.
 
 import asyncio
 import os
+import secrets
+import time
 from collections.abc import Callable, Generator
 from decimal import Decimal
 from uuid import uuid4
 
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 from shared.contracts.base_event import BaseEvent
@@ -35,6 +38,7 @@ from sqlalchemy.pool import NullPool
 import app.main as main_module
 from app.core.data.source.local.sql_alchemy_base import SqlAlchemyBase
 from app.core.providers.db import get_db_session
+from app.core.providers.env_config import get_env_config
 from app.features.orders.application.contracts.event_publisher import EventPublisher
 from app.features.orders.application.contracts.unit_of_work import OrderUnitOfWork
 from app.features.orders.infrastructure.models import (  # noqa: F401 - register tables
@@ -46,6 +50,7 @@ from app.features.orders.infrastructure.persistence.sqlalchemy_order_unit_of_wor
     SqlAlchemyOrderUnitOfWork,
 )
 from app.features.orders.presentation.http.router import router as orders_router  # noqa: F401
+from app.features.session.domain.token_claims import AUDIENCE, ISSUER, TOKEN_TYPE
 from app.main import app
 
 # ---------------------------------------------------------------------------
@@ -258,3 +263,70 @@ def api_client(db_session_override, spy_publisher, monkeypatch):
     with TestClient(app) as test_client:
         yield test_client
     app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Session tokens (ADR-0027)
+# ---------------------------------------------------------------------------
+# Secrets and tokens are generated at runtime: the repo carries no key and no
+# JWT literal.
+
+
+@pytest.fixture(autouse=True)
+def auth_secret(monkeypatch) -> Generator[str, None, None]:
+    """A fresh signing secret per test, installed through the environment the
+    same way compose does, with the cached settings rebuilt around it."""
+    secret = secrets.token_urlsafe(32)
+    monkeypatch.setenv("AUTH_TOKEN_SECRET", secret)
+    get_env_config.cache_clear()
+    yield secret
+    get_env_config.cache_clear()
+
+
+@pytest.fixture
+def make_token(auth_secret) -> Callable[..., str]:
+    """Build a signed session token; keyword overrides tamper with it.
+
+    ``omit`` drops claims from the default payload and ``issued_in`` shifts
+    ``iat`` (seconds from now).
+    """
+
+    def _make(
+        *,
+        sub: object = "customer-1",
+        secret: str | None = None,
+        algorithm: str = "HS256",
+        issuer: str = ISSUER,
+        audience: str = AUDIENCE,
+        typ: str | None = TOKEN_TYPE,
+        expires_in: int = 3600,
+        issued_in: int = 0,
+        omit: tuple[str, ...] = (),
+    ) -> str:
+        now = int(time.time())
+        payload: dict[str, object] = {
+            "iss": issuer,
+            "aud": audience,
+            "sub": sub,
+            "iat": now + issued_in,
+            "exp": now + expires_in,
+        }
+        if typ is not None:
+            payload["typ"] = typ
+        for claim in omit:
+            payload.pop(claim, None)
+        key = None if algorithm == "none" else (secret or auth_secret)
+        return jwt.encode(payload, key, algorithm=algorithm)
+
+    return _make
+
+
+@pytest.fixture
+def customer_id() -> str:
+    return "customer-1"
+
+
+@pytest.fixture
+def auth_headers(make_token, customer_id) -> dict[str, str]:
+    """Authorization header of the default customer."""
+    return {"Authorization": f"Bearer {make_token(sub=customer_id)}"}

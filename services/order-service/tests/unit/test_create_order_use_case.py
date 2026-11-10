@@ -27,6 +27,11 @@ class FakeOrderRepository(OrderRepository):
         self.saved.append(order)
         return order
 
+    def get_by_id_for_customer(self, order_id: str, customer_id: str) -> Order | None:
+        return next(
+            (o for o in self.saved if o.id == order_id and o.customer_id == customer_id), None
+        )
+
     def get_by_id(self, order_id: str) -> Order | None:
         return next((o for o in self.saved if o.id == order_id), None)
 
