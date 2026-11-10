@@ -10,10 +10,12 @@ point at a stack running on different ports/hosts (e.g. CI, if ever enabled —
 see README).
 """
 
+import base64
+import json
 import os
 import time
-import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -122,7 +124,31 @@ def wait_until() -> Callable[..., None]:
     return _wait
 
 
+@dataclass
+class CustomerSession:
+    """An anonymous visitor (ADR-0027): the customer id the API gave them and
+    an order-service client that sends their token."""
+
+    customer_id: str
+    client: httpx.Client
+
+
+def _subject_of(token: str) -> str:
+    """Read ``sub`` from a token without checking it: the server already did,
+    and this suite holds no key."""
+    payload = token.split(".")[1]
+    padded = payload + "=" * (-len(payload) % 4)
+    return str(json.loads(base64.urlsafe_b64decode(padded))["sub"])
+
+
 @pytest.fixture
-def unique_customer_id() -> str:
-    """A fresh customer id per test, so Mailpit inboxes never collide."""
-    return f"e2e-{uuid.uuid4().hex[:12]}"
+def customer_session(order_client: httpx.Client) -> Generator[CustomerSession, None, None]:
+    """A fresh session per test over HTTP, so Mailpit inboxes never collide.
+    The email recipient is ``<customer_id>@example.com`` (ADR-0010)."""
+    response = order_client.post("/v1/session")
+    assert response.status_code == 201, response.text
+    token = response.json()["access_token"]
+    with httpx.Client(
+        base_url=ORDER_SERVICE_URL, timeout=10.0, headers={"Authorization": f"Bearer {token}"}
+    ) as client:
+        yield CustomerSession(customer_id=_subject_of(token), client=client)

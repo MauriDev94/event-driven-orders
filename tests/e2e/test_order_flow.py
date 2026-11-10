@@ -15,6 +15,7 @@ from typing import Any
 
 import httpx
 import pytest
+from conftest import CustomerSession
 
 pytestmark = pytest.mark.e2e
 
@@ -23,13 +24,10 @@ _SKU_WITH_STOCK = "SKU-001"
 _SKU_LOW_STOCK = "SKU-005"
 
 
-def _create_order(
-    order_client: httpx.Client, customer_id: str, product_id: str, quantity: int
-) -> dict[str, Any]:
+def _create_order(order_client: httpx.Client, product_id: str, quantity: int) -> dict[str, Any]:
     response = order_client.post(
         "/v1/orders",
         json={
-            "customer_id": customer_id,
             "lines": [{"product_id": product_id, "quantity": quantity, "unit_price": "10.00"}],
         },
     )
@@ -63,17 +61,16 @@ def _body(mailpit_client: httpx.Client, message: dict[str, Any]) -> str:
 
 
 def test_happy_path_order_is_confirmed_and_confirmation_email_is_sent(
-    order_client: httpx.Client,
+    customer_session: CustomerSession,
     mailpit_client: httpx.Client,
-    unique_customer_id: str,
     wait_until: Callable[..., None],
 ) -> None:
-    order = _create_order(order_client, unique_customer_id, _SKU_WITH_STOCK, quantity=1)
+    order = _create_order(customer_session.client, _SKU_WITH_STOCK, quantity=1)
     order_id = order["id"]
-    recipient = f"{unique_customer_id}@example.com"
+    recipient = f"{customer_session.customer_id}@example.com"
 
     wait_until(
-        lambda: _order_status(order_client, order_id) == "confirmed",
+        lambda: _order_status(customer_session.client, order_id) == "confirmed",
         message=f"order {order_id} never reached status 'confirmed'",
     )
 
@@ -88,18 +85,17 @@ def test_happy_path_order_is_confirmed_and_confirmation_email_is_sent(
 
 
 def test_rejection_path_order_is_rejected_and_rejection_email_is_sent(
-    order_client: httpx.Client,
+    customer_session: CustomerSession,
     mailpit_client: httpx.Client,
-    unique_customer_id: str,
     wait_until: Callable[..., None],
 ) -> None:
     # Ask for far more than the seeded stock (SKU-005 = 5 units).
-    order = _create_order(order_client, unique_customer_id, _SKU_LOW_STOCK, quantity=999)
+    order = _create_order(customer_session.client, _SKU_LOW_STOCK, quantity=999)
     order_id = order["id"]
-    recipient = f"{unique_customer_id}@example.com"
+    recipient = f"{customer_session.customer_id}@example.com"
 
     wait_until(
-        lambda: _order_status(order_client, order_id) == "rejected",
+        lambda: _order_status(customer_session.client, order_id) == "rejected",
         message=f"order {order_id} never reached status 'rejected'",
     )
 

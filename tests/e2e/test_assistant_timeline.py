@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 import pytest
+from conftest import CustomerSession
 
 pytestmark = pytest.mark.e2e
 
@@ -27,7 +28,6 @@ _SKU_LOW_STOCK = "SKU-005"
 
 def _create_order(
     order_client: httpx.Client,
-    customer_id: str,
     product_id: str,
     quantity: int,
     correlation_id: str,
@@ -35,7 +35,6 @@ def _create_order(
     response = order_client.post(
         "/v1/orders",
         json={
-            "customer_id": customer_id,
             "lines": [{"product_id": product_id, "quantity": quantity, "unit_price": "10.00"}],
         },
         headers={"X-Correlation-ID": correlation_id},
@@ -72,14 +71,13 @@ def _wait_for_events(
 
 
 def test_confirmed_order_timeline_shows_its_three_events_in_order(
-    order_client: httpx.Client,
+    customer_session: CustomerSession,
     assistant_client: httpx.Client,
-    unique_customer_id: str,
     wait_until: Callable[..., None],
 ) -> None:
     correlation_id = f"e2e-{uuid.uuid4()}"
     order = _create_order(
-        order_client, unique_customer_id, _SKU_WITH_STOCK, quantity=2, correlation_id=correlation_id
+        customer_session.client, _SKU_WITH_STOCK, quantity=2, correlation_id=correlation_id
     )
 
     timeline = _wait_for_events(
@@ -92,7 +90,7 @@ def test_confirmed_order_timeline_shows_its_three_events_in_order(
     assert timeline["status"] == "confirmed"
     assert timeline["stock_result"] == "reserved"
     assert timeline["rejection_reason"] is None
-    assert timeline["customer_id"] == unique_customer_id
+    assert timeline["customer_id"] == customer_session.customer_id
     assert timeline["total_amount"] == order["total_amount"]
     assert timeline["items"] == order["lines"]
     # ADR-0012: the id of the POST reaches every event, across three services.
@@ -100,15 +98,13 @@ def test_confirmed_order_timeline_shows_its_three_events_in_order(
 
 
 def test_rejected_order_timeline_keeps_the_rejection_reason(
-    order_client: httpx.Client,
+    customer_session: CustomerSession,
     assistant_client: httpx.Client,
-    unique_customer_id: str,
     wait_until: Callable[..., None],
 ) -> None:
     # Ask for far more than the seeded stock (SKU-005 = 5 units).
     order = _create_order(
-        order_client,
-        unique_customer_id,
+        customer_session.client,
         _SKU_LOW_STOCK,
         quantity=999,
         correlation_id=f"e2e-{uuid.uuid4()}",
