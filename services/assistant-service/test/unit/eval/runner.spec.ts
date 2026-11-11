@@ -22,11 +22,35 @@ class QuotaSpentLlmClient extends LlmClient {
   }
 }
 
+const foreignOrderIds = EVAL_ORDERS.filter(
+  (order) => order.customerId !== EVAL_CUSTOMER,
+).map((order) => order.orderId);
+
+const isolationCaseIds = (results: readonly { id: string }[]) =>
+  results.filter((result) => result.id.startsWith('other-customer-'));
+
 describe('the eval cases', () => {
-  it('asks as the one customer who owns every order of the catalog', () => {
-    expect(new Set(EVAL_ORDERS.map((order) => order.customerId))).toEqual(
-      new Set([EVAL_CUSTOMER]),
-    );
+  it('ask as one customer over a catalog that also holds orders of another', () => {
+    expect(
+      EVAL_ORDERS.some((order) => order.customerId === EVAL_CUSTOMER),
+    ).toBe(true);
+    expect(foreignOrderIds.length).toBeGreaterThan(0);
+  });
+
+  it('never expect a citation of the other customer, and the isolation cases rule out all of its orders', () => {
+    const cited = EVAL_CASES.flatMap((evalCase) => evalCase.expect.cites ?? []);
+    const isolation = isolationCaseIds(EVAL_CASES);
+
+    expect(
+      cited.filter((orderId) => foreignOrderIds.includes(orderId)),
+    ).toEqual([]);
+    expect(isolation.length).toBeGreaterThanOrEqual(3);
+    for (const evalCase of isolation) {
+      expect(evalCase.kind).toBe('adversarial');
+      expect(evalCase.expect.notCites).toEqual(
+        expect.arrayContaining(foreignOrderIds),
+      );
+    }
   });
 
   it('have unique ids and only cite orders of the catalog', () => {
@@ -58,6 +82,14 @@ describe('runEval', () => {
     ).toMatchObject({ passed: true, failures: [], outcome: 'answered' });
     expect(report.passed).toBe(report.results.filter((r) => r.passed).length);
     expect(report.modelCalls).toBeGreaterThanOrEqual(EVAL_CASES.length);
+  });
+
+  it('keeps the fake model inside the asking customer on every isolation case', async () => {
+    const report = await runEval({ llm: new FakeLlmClient() });
+    const isolation = isolationCaseIds(report.results);
+
+    expect(isolation.length).toBeGreaterThanOrEqual(3);
+    expect(isolation.filter((result) => !result.passed)).toEqual([]);
   });
 
   it('stops at the first quota error instead of spending more', async () => {
