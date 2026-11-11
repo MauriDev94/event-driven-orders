@@ -26,7 +26,7 @@ const foreignOrderIds = EVAL_ORDERS.filter(
   (order) => order.customerId !== EVAL_CUSTOMER,
 ).map((order) => order.orderId);
 
-const isolationCaseIds = (results: readonly { id: string }[]) =>
+const isolationCases = <T extends { id: string }>(results: readonly T[]): T[] =>
   results.filter((result) => result.id.startsWith('other-customer-'));
 
 describe('the eval cases', () => {
@@ -39,7 +39,7 @@ describe('the eval cases', () => {
 
   it('never expect a citation of the other customer, and the isolation cases rule out all of its orders', () => {
     const cited = EVAL_CASES.flatMap((evalCase) => evalCase.expect.cites ?? []);
-    const isolation = isolationCaseIds(EVAL_CASES);
+    const isolation = isolationCases(EVAL_CASES);
 
     expect(
       cited.filter((orderId) => foreignOrderIds.includes(orderId)),
@@ -86,7 +86,7 @@ describe('runEval', () => {
 
   it('keeps the fake model inside the asking customer on every isolation case', async () => {
     const report = await runEval({ llm: new FakeLlmClient() });
-    const isolation = isolationCaseIds(report.results);
+    const isolation = isolationCases(report.results);
 
     expect(isolation.length).toBeGreaterThanOrEqual(3);
     expect(isolation.filter((result) => !result.passed)).toEqual([]);
