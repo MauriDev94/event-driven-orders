@@ -187,7 +187,7 @@ La migración inicial siembra estos productos para poder probar el flujo sin dat
 
 ## Cómo probar el flujo end-to-end a mano
 
-Con el stack arriba (`make up`), primero abre una sesión anónima (ADR-0027) y después todo el flujo se dispara con un solo POST. El token vale 7 días y es tu identidad: el `customer_id` sale de él (el campo `sub`), no del body, y `order-service` solo te deja leer tus propios pedidos. El asistente aplica la misma regla a partir de #94; hasta entonces sus endpoints no piden token.
+Con el stack arriba (`make up`), primero abre una sesión anónima (ADR-0027) y después todo el flujo se dispara con un solo POST. El token vale 7 días y es tu identidad: el `customer_id` sale de él (el campo `sub`), no del body, y `order-service` solo te deja leer tus propios pedidos. `assistant-service` verifica el mismo token y aplica la misma regla: el timeline y las herramientas del asistente solo ven tus pedidos, y sin token sus endpoints responden 401.
 
 ```bash
 # bash / curl
@@ -260,7 +260,7 @@ La orden termina en `status: "rejected"` y llega un email "Your order `<order_id
 `assistant-service` arma la historia de cada pedido solo con los eventos que ve pasar:
 
 ```bash
-curl http://localhost:8004/v1/assistant/orders/<order_id>/timeline
+curl -H "Authorization: Bearer $TOKEN" http://localhost:8004/v1/assistant/orders/<order_id>/timeline
 ```
 
 ```json
@@ -288,6 +288,7 @@ Un pedido que el servicio no vio responde 404 con `{"message": "order not found"
 
 ```bash
 curl -X POST http://localhost:8004/v1/assistant/ask \
+  -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"question": "¿Por qué se rechazó el pedido <order_id>?"}'
 ```
@@ -525,7 +526,7 @@ Las más significativas:
 | [0025](docs/adr/0025-verificacion-de-hechos-y-filtracion-del-prompt.md) | Verificación de montos y SKU, y reemplazo de una respuesta que copia el prompt (`leaked`) | Un monto inventado o una regla del prompt copiada no llegan al cliente como `answered` |
 | [0026](docs/adr/0026-redis-compartido-ttl-y-topes.md) | Un Redis con `volatile-ttl`: toda clave con TTL y topes por minuto | Llenar la caché no desaloja el contador diario, y el asistente no pasa de forma sostenida la cuota por minuto de Gemini |
 
-**[Ver los 27 ADRs →](docs/adr/README.md)**
+**[Ver los 28 ADRs →](docs/adr/README.md)**
 
 ---
 

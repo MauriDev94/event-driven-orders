@@ -5,6 +5,7 @@ import { toProjectionCommand } from '../../src/features/order-history/applicatio
 import { ProjectOrderEvent } from '../../src/features/order-history/application/usecases/project-order-event.js';
 import { createTestDatabase, type TestDatabase } from '../support/database.js';
 import { FakeBroker } from '../support/fake-broker.js';
+import { bearer } from '../support/session-token.js';
 import { createTestApp } from '../support/test-app.js';
 import {
   orderCreated,
@@ -100,6 +101,7 @@ describe('assistant-service HTTP API', () => {
     it('answers 404 like order-service when the order is unknown', async () => {
       const response = await request(app.getHttpServer())
         .get('/v1/assistant/orders/missing/timeline')
+        .set('Authorization', bearer('c-1'))
         .expect(404);
 
       expect(response.body).toEqual({ message: 'order not found' });
@@ -122,6 +124,7 @@ describe('assistant-service HTTP API', () => {
 
       const response = await request(app.getHttpServer())
         .get('/v1/assistant/orders/o-1/timeline')
+        .set('Authorization', bearer('c-1'))
         .expect(200);
 
       expect(response.body).toEqual({

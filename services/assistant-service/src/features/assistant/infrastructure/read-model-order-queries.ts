@@ -1,21 +1,22 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { assertCustomerId } from '../../../core/identifiers.js';
 import { OrderViewQueries } from '../../order-history/application/contracts/order-view.queries.js';
 import { reasonOf } from '../../order-history/application/mappers/event-reason.js';
 import { GetOrderTimeline } from '../../order-history/application/usecases/get-order-timeline.js';
 import {
   type OrderDetails,
   OrderQueries,
+  type OrderScope,
   type OrderSearch,
   type OrderSummary,
   type RejectionLimits,
   type RejectionSummary,
-  type TimeRange,
 } from '../application/contracts/order-queries.js';
 
 /**
  * The assistant's read side over the order-history read model: an adapter to
  * order-history's ports. The timeline goes through GetOrderTimeline, so the
- * tool shares the timeline cache with the HTTP endpoint.
+ * tool shares the timeline cache and the owner check with the HTTP endpoint.
  */
 @Injectable()
 export class ReadModelOrderQueries extends OrderQueries {
@@ -27,8 +28,11 @@ export class ReadModelOrderQueries extends OrderQueries {
     super();
   }
 
-  async timeline(orderId: string): Promise<OrderDetails | null> {
-    const timeline = await this.getOrderTimeline.execute(orderId);
+  async timeline(
+    orderId: string,
+    customerId: string,
+  ): Promise<OrderDetails | null> {
+    const timeline = await this.getOrderTimeline.execute(orderId, customerId);
     if (timeline === null) return null;
     const { view, events } = timeline;
     return {
@@ -50,14 +54,16 @@ export class ReadModelOrderQueries extends OrderQueries {
     };
   }
 
-  search(filters: OrderSearch): Promise<OrderSummary[]> {
+  async search(filters: OrderSearch): Promise<OrderSummary[]> {
+    assertCustomerId(filters.customerId);
     return this.views.search(filters);
   }
 
-  rejectionSummary(
-    range: TimeRange,
+  async rejectionSummary(
+    scope: OrderScope,
     limits: RejectionLimits,
   ): Promise<RejectionSummary> {
-    return this.views.rejectionStats(range, limits);
+    assertCustomerId(scope.customerId);
+    return this.views.rejectionStats(scope, limits);
   }
 }

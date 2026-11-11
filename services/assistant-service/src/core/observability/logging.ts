@@ -19,6 +19,9 @@ export function loggerParams(env: Pick<Env, 'LOG_LEVEL'>): Params {
       base: { service: SERVICE_NAME },
       timestamp: stdTimeFunctions.isoTime,
       formatters: { level: (label) => ({ level: label }) },
+      // The bearer token and cookies are credentials (SEC-06): the request log
+      // keeps the header names but not their values.
+      redact: ['req.headers.authorization', 'req.headers.cookie'],
       genReqId: (req: IncomingMessage, res: ServerResponse) => {
         const header = req.headers[CORRELATION_HEADER];
         const id = (Array.isArray(header) ? header[0] : header) || randomUUID();

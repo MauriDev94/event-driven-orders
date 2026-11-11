@@ -9,6 +9,10 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  CurrentCustomer,
+  SessionAuthGuard,
+} from '../../../../core/auth/session-auth.guard.js';
+import {
   ASSISTANT_LLM_TOKENS,
   ASSISTANT_QUESTIONS,
   ASSISTANT_TOOL_CALLS,
@@ -34,12 +38,16 @@ export class AssistantController {
   /** A question about the orders, answered by the agent over the read model. */
   @Post('ask')
   @HttpCode(HttpStatus.OK)
-  @UseGuards(AskRateLimitGuard)
-  async ask(@Body() body: unknown): Promise<AskResponse> {
+  // The session is checked first: a 401 must not spend the per-IP limit.
+  @UseGuards(SessionAuthGuard, AskRateLimitGuard)
+  async ask(
+    @Body() body: unknown,
+    @CurrentCustomer() customerId: string,
+  ): Promise<AskResponse> {
     const { question } = parseAskRequest(body);
     let result: AskAssistantResult;
     try {
-      result = await this.askAssistant.execute(question);
+      result = await this.askAssistant.execute(question, customerId);
     } catch (error) {
       ASSISTANT_QUESTIONS.inc({ outcome: 'error' });
       if (error instanceof Error) {

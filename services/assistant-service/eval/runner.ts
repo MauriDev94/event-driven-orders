@@ -9,7 +9,7 @@ import { ModelCallBudget } from '../src/features/assistant/application/contracts
 import type { OrderDetails } from '../src/features/assistant/application/contracts/order-queries.js';
 import { buildOrderTools } from '../src/features/assistant/application/tools/order-tools.js';
 import { AskAssistant } from '../src/features/assistant/application/usecases/ask-assistant.js';
-import { EVAL_CASES, EVAL_NOW, EVAL_ORDERS } from './cases.js';
+import { EVAL_CASES, EVAL_CUSTOMER, EVAL_NOW, EVAL_ORDERS } from './cases.js';
 import { InMemoryOrderQueries } from './in-memory-order-queries.js';
 import { type EvalCase, scoreCase } from './score.js';
 
@@ -121,7 +121,11 @@ export async function runEval(options: EvalOptions): Promise<EvalReport> {
   );
   const assistant = new AskAssistant(
     llm,
-    buildOrderTools(new InMemoryOrderQueries(options.orders ?? EVAL_ORDERS)),
+    (customerId) =>
+      buildOrderTools(
+        new InMemoryOrderQueries(options.orders ?? EVAL_ORDERS),
+        customerId,
+      ),
     budget,
     {
       now: () => EVAL_NOW,
@@ -149,7 +153,7 @@ export async function runEval(options: EvalOptions): Promise<EvalReport> {
       continue;
     }
     try {
-      const result = await assistant.execute(evalCase.question);
+      const result = await assistant.execute(evalCase.question, EVAL_CUSTOMER);
       usage.input += result.usage.input;
       usage.output += result.usage.output;
       const failures = scoreCase(evalCase.expect, result);

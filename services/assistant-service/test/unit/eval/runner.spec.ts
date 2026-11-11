@@ -5,7 +5,7 @@ import {
   type LlmTurn,
 } from '../../../src/features/assistant/application/contracts/llm-client.js';
 import { FakeLlmClient } from '../../../src/features/assistant/infrastructure/fake-llm.client.js';
-import { EVAL_CASES, EVAL_ORDERS } from '../../../eval/cases.js';
+import { EVAL_CASES, EVAL_CUSTOMER, EVAL_ORDERS } from '../../../eval/cases.js';
 import {
   formatReport,
   questionTimeoutMs,
@@ -23,6 +23,12 @@ class QuotaSpentLlmClient extends LlmClient {
 }
 
 describe('the eval cases', () => {
+  it('asks as the one customer who owns every order of the catalog', () => {
+    expect(new Set(EVAL_ORDERS.map((order) => order.customerId))).toEqual(
+      new Set([EVAL_CUSTOMER]),
+    );
+  });
+
   it('have unique ids and only cite orders of the catalog', () => {
     const ids = EVAL_CASES.map((evalCase) => evalCase.id);
     const known = new Set(EVAL_ORDERS.map((order) => order.orderId));

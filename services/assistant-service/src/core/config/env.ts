@@ -5,12 +5,23 @@ export const SERVICE_NAME = 'assistant-service';
 /** Injection token for the validated environment. */
 export const ENV = Symbol('ENV');
 
+/** An HMAC-SHA256 key shorter than its 32-byte output weakens the signature. */
+const MIN_SECRET_BYTES = 32;
+
 const envSchema = z
   .object({
     PORT: z.coerce.number().int().positive().default(8000),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
     RABBITMQ_URL: z.url({ protocol: /^amqps?$/ }),
     REDIS_URL: z.url({ protocol: /^rediss?$/ }),
+    // HS256 key shared with order-service, which issues the session tokens
+    // (ADR-0027). No default; the refine reports bytes, never the value.
+    AUTH_TOKEN_SECRET: z
+      .string()
+      .refine(
+        (secret) => Buffer.byteLength(secret, 'utf8') >= MIN_SECRET_BYTES,
+        `must be at least ${MIN_SECRET_BYTES} bytes`,
+      ),
     LOG_LEVEL: z
       .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
       .default('info'),

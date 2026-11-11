@@ -14,6 +14,7 @@ import {
   answer,
   ScriptedLlmClient,
 } from '../../support/scripted-llm-client.js';
+import { bearer } from '../../support/session-token.js';
 import { createTestApp, randomIp } from '../../support/test-app.js';
 
 // Redis runs with maxmemory-policy volatile-ttl (ADR-0026): a key without a
@@ -61,12 +62,14 @@ describe('Redis keys written by the service', () => {
     await request(app.getHttpServer())
       .post('/v1/assistant/ask')
       .set('X-Forwarded-For', ip)
+      .set('Authorization', bearer('c-1'))
       .send({ question: 'hola' })
       .expect(200);
     // Timeline rate limit and cache entry.
     await request(app.getHttpServer())
       .get(`/v1/assistant/orders/${orderId}/timeline`)
       .set('X-Forwarded-For', ip)
+      .set('Authorization', bearer('c-1'))
       .expect(200);
     // Generation counter (an event invalidates the cached entry).
     await project.execute(toProjectionCommand(stockReserved(orderId)));
@@ -74,6 +77,7 @@ describe('Redis keys written by the service', () => {
     await request(app.getHttpServer())
       .get(`/v1/assistant/orders/${orderId}/timeline`)
       .set('X-Forwarded-For', ip)
+      .set('Authorization', bearer('c-1'))
       .expect(200);
 
     const keys = await allKeys();
@@ -88,7 +92,7 @@ describe('Redis keys written by the service', () => {
     expect(
       find(new RegExp(`^order-timeline:${orderId}:generation$`)),
     ).toHaveLength(1);
-    const entryTtl = ttls.get(`order-timeline:${orderId}`);
+    const entryTtl = ttls.get(`order-timeline:${orderId}:customer:c-1`);
     expect(entryTtl).toBeGreaterThanOrEqual(1);
     expect(entryTtl).toBeLessThanOrEqual(60);
     expect([...ttls].filter(([, ttl]) => ttl === -1)).toEqual([]);

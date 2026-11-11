@@ -14,15 +14,14 @@
  * which goes to the DLQ.
  */
 import { z } from 'zod';
+import { idSchema } from '../identifiers.js';
+
+/** Ids follow order-service's ID_PATTERN and ID_MAX_LENGTH (see identifiers.ts). */
+const id = idSchema;
 
 const decimal = z
   .string()
   .regex(/^\d+(\.\d+)?$/, 'expected a non-negative decimal string');
-
-/** order-service's `ID_PATTERN` and `ID_MAX_LENGTH`: plain identifiers, never free text. */
-const ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
-const ID_MAX_LENGTH = 36;
-const id = z.string().min(1).max(ID_MAX_LENGTH).regex(ID_PATTERN);
 
 /** The longest reason inventory writes is ~67 characters; this is 3x that. */
 const REASON_MAX_LENGTH = 200;

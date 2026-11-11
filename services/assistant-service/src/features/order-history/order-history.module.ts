@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../../core/auth/auth.module.js';
 import { RedisConnection } from '../../core/cache/redis.connection.js';
 import { ENV, type Env } from '../../core/config/env.js';
 import { RedisRateLimiter } from '../../core/rate-limit/redis-rate-limiter.js';
@@ -19,6 +20,7 @@ import {
 
 /** DI wiring of the feature (the `di/` package of the Python services). */
 @Module({
+  imports: [AuthModule],
   controllers: [OrderTimelineController],
   providers: [
     { provide: OrderHistoryRepository, useClass: PrismaOrderHistoryRepository },

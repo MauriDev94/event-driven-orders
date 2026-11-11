@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isValidId } from '../../../../core/identifiers.js';
 import type { ToolSpec } from '../contracts/llm-client.js';
 import type {
   OrderDetails,
@@ -147,8 +148,15 @@ function details(order: OrderDetails) {
 /**
  * The assistant's tools: read-only queries over the read model, with
  * snake_case output like the HTTP API. Nothing here can change an order.
+ *
+ * They are built per question, for the customer who asks (ADR-0027): the
+ * customer is closed over, never an argument. The zod schemas drop any
+ * `customer_id` the model invents, and none of the output carries the id.
  */
-export function buildOrderTools(queries: OrderQueries): AssistantTool[] {
+export function buildOrderTools(
+  queries: OrderQueries,
+  customerId: string,
+): AssistantTool[] {
   return [
     defineTool(
       'get_order_timeline',
@@ -157,7 +165,12 @@ export function buildOrderTools(queries: OrderQueries): AssistantTool[] {
         order_id: z.string().min(1).describe('The order ID (a UUID).'),
       }),
       async ({ order_id }) => {
-        const order = await queries.timeline(order_id);
+        // An id that can't be an order id is a missing order: no query, and the
+        // model gets no copy of what it sent.
+        if (!isValidId(order_id)) {
+          return { output: { found: false }, evidence: [] };
+        }
+        const order = await queries.timeline(order_id, customerId);
         if (order === null) {
           return { output: { found: false, order_id }, evidence: [] };
         }
@@ -193,6 +206,7 @@ export function buildOrderTools(queries: OrderQueries): AssistantTool[] {
       }),
       async ({ status, from, to, product_id, limit }) => {
         const orders = await queries.search({
+          customerId,
           ...(status === undefined ? {} : { status }),
           ...toRange(from, to),
           ...(product_id === undefined ? {} : { productId: product_id }),
@@ -212,10 +226,13 @@ export function buildOrderTools(queries: OrderQueries): AssistantTool[] {
       'Rejected orders grouped by rejection reason, with the products and orders of each group.',
       z.object(rangeShape),
       async ({ from, to }) => {
-        const result = await queries.rejectionSummary(toRange(from, to), {
-          groups: MAX_REJECTION_GROUPS,
-          productIdsPerGroup: MAX_PRODUCT_IDS_PER_GROUP,
-        });
+        const result = await queries.rejectionSummary(
+          { customerId, ...toRange(from, to) },
+          {
+            groups: MAX_REJECTION_GROUPS,
+            productIdsPerGroup: MAX_PRODUCT_IDS_PER_GROUP,
+          },
+        );
         const groupsCut = result.totalGroups > result.groups.length;
         return {
           output: {

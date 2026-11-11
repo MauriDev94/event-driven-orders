@@ -40,9 +40,12 @@ export class InMemoryOrderHistoryRepository extends OrderHistoryRepository {
     return result;
   }
 
-  async findTimeline(orderId: string): Promise<OrderTimeline | null> {
+  async findTimeline(
+    orderId: string,
+    customerId: string,
+  ): Promise<OrderTimeline | null> {
     const stored = this.views.get(orderId);
-    if (!stored) return null;
+    if (!stored || stored.view.customerId !== customerId) return null;
     const events = [...this.events.values()]
       .filter((entry) => entry.orderId === orderId)
       .sort((a, b) => a.occurredAt.getTime() - b.occurredAt.getTime());

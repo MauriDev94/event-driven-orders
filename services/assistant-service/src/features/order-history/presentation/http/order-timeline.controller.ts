@@ -6,6 +6,10 @@ import {
   Param,
   UseGuards,
 } from '@nestjs/common';
+import {
+  CurrentCustomer,
+  SessionAuthGuard,
+} from '../../../../core/auth/session-auth.guard.js';
 import { TimelineRateLimitGuard } from './timeline-rate-limit.guard.js';
 import { GetOrderTimeline } from '../../application/usecases/get-order-timeline.js';
 import {
@@ -20,13 +24,18 @@ export class OrderTimelineController {
     private readonly getOrderTimeline: GetOrderTimeline,
   ) {}
 
-  /** The order's history without the LLM, for the e2e tests and the frontend. */
+  /**
+   * The order's history without the LLM, for the e2e tests and the frontend.
+   * Only its owner sees it; anyone else gets the 404 of a missing order
+   * (ADR-0027). The session is checked before the per-IP limit.
+   */
   @Get(':orderId/timeline')
-  @UseGuards(TimelineRateLimitGuard)
+  @UseGuards(SessionAuthGuard, TimelineRateLimitGuard)
   async timeline(
     @Param('orderId') orderId: string,
+    @CurrentCustomer() customerId: string,
   ): Promise<OrderTimelineResponse> {
-    const timeline = await this.getOrderTimeline.execute(orderId);
+    const timeline = await this.getOrderTimeline.execute(orderId, customerId);
     if (timeline === null) {
       // Same body as order-service's 404.
       throw new NotFoundException({ message: 'order not found' });
