@@ -127,10 +127,12 @@ def wait_until() -> Callable[..., None]:
 @dataclass
 class CustomerSession:
     """An anonymous visitor (ADR-0027): the customer id the API gave them and
-    an order-service client that sends their token."""
+    an order-service client and an assistant-service client that send their
+    token."""
 
     customer_id: str
     client: httpx.Client
+    assistant: httpx.Client
 
 
 def _subject_of(token: str) -> str:
@@ -148,7 +150,9 @@ def customer_session(order_client: httpx.Client) -> Generator[CustomerSession, N
     response = order_client.post("/v1/session")
     assert response.status_code == 201, response.text
     token = response.json()["access_token"]
-    with httpx.Client(
-        base_url=ORDER_SERVICE_URL, timeout=10.0, headers={"Authorization": f"Bearer {token}"}
-    ) as client:
-        yield CustomerSession(customer_id=_subject_of(token), client=client)
+    headers = {"Authorization": f"Bearer {token}"}
+    with (
+        httpx.Client(base_url=ORDER_SERVICE_URL, timeout=10.0, headers=headers) as client,
+        httpx.Client(base_url=ASSISTANT_SERVICE_URL, timeout=10.0, headers=headers) as assistant,
+    ):
+        yield CustomerSession(customer_id=_subject_of(token), client=client, assistant=assistant)

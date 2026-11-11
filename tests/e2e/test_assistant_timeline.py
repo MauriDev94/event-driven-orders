@@ -72,7 +72,6 @@ def _wait_for_events(
 
 def test_confirmed_order_timeline_shows_its_three_events_in_order(
     customer_session: CustomerSession,
-    assistant_client: httpx.Client,
     wait_until: Callable[..., None],
 ) -> None:
     correlation_id = f"e2e-{uuid.uuid4()}"
@@ -81,7 +80,7 @@ def test_confirmed_order_timeline_shows_its_three_events_in_order(
     )
 
     timeline = _wait_for_events(
-        assistant_client,
+        customer_session.assistant,
         order["id"],
         ["order.created", "stock.reserved", "order.confirmed"],
         wait_until,
@@ -99,7 +98,6 @@ def test_confirmed_order_timeline_shows_its_three_events_in_order(
 
 def test_rejected_order_timeline_keeps_the_rejection_reason(
     customer_session: CustomerSession,
-    assistant_client: httpx.Client,
     wait_until: Callable[..., None],
 ) -> None:
     # Ask for far more than the seeded stock (SKU-005 = 5 units).
@@ -111,7 +109,7 @@ def test_rejected_order_timeline_keeps_the_rejection_reason(
     )
 
     timeline = _wait_for_events(
-        assistant_client,
+        customer_session.assistant,
         order["id"],
         ["order.created", "stock.rejected", "order.rejected"],
         wait_until,
@@ -124,8 +122,15 @@ def test_rejected_order_timeline_keeps_the_rejection_reason(
     assert [e.get("reason") for e in timeline["events"]] == [None, reason, reason]
 
 
-def test_unknown_order_has_no_timeline(assistant_client: httpx.Client) -> None:
-    response = assistant_client.get(f"/v1/assistant/orders/{uuid.uuid4()}/timeline")
+def test_unknown_order_has_no_timeline(customer_session: CustomerSession) -> None:
+    response = customer_session.assistant.get(f"/v1/assistant/orders/{uuid.uuid4()}/timeline")
 
     assert response.status_code == 404
     assert response.json() == {"message": "order not found"}
+
+
+def test_timeline_refuses_a_request_without_a_session(assistant_client: httpx.Client) -> None:
+    response = assistant_client.get(f"/v1/assistant/orders/{uuid.uuid4()}/timeline")
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"

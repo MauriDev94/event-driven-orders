@@ -61,12 +61,13 @@ def _rejected_order(
 
 def test_assistant_explains_a_rejection_citing_the_order_and_its_events(
     customer_session: CustomerSession,
-    assistant_client: httpx.Client,
     wait_until: Callable[..., None],
 ) -> None:
-    order_id, event_ids = _rejected_order(customer_session.client, assistant_client, wait_until)
+    order_id, event_ids = _rejected_order(
+        customer_session.client, customer_session.assistant, wait_until
+    )
 
-    body = _ask(assistant_client, f"¿Por qué se rechazó el pedido {order_id}?")
+    body = _ask(customer_session.assistant, f"¿Por qué se rechazó el pedido {order_id}?")
 
     assert body["outcome"] == "answered"
     assert {"order_id": order_id, "event_ids": event_ids} in body["citations"]
@@ -76,9 +77,17 @@ def test_assistant_explains_a_rejection_citing_the_order_and_its_events(
 
 
 def test_assistant_says_it_has_no_data_for_an_unknown_order(
-    assistant_client: httpx.Client,
+    customer_session: CustomerSession,
 ) -> None:
-    body = _ask(assistant_client, f"¿Qué pasó con el pedido {uuid.uuid4()}?")
+    body = _ask(customer_session.assistant, f"¿Qué pasó con el pedido {uuid.uuid4()}?")
 
     assert body["outcome"] == "no_data"
     assert body["citations"] == []
+
+
+def test_assistant_refuses_a_question_without_a_session(assistant_client: httpx.Client) -> None:
+    response = assistant_client.post("/v1/assistant/ask", json={"question": "hola"})
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert response.json() == {"message": "Invalid or missing token"}
