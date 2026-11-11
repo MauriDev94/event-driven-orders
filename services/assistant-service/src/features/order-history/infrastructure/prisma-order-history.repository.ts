@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import { assertCustomerId } from '../../../core/identifiers.js';
 import { PrismaService } from '../../../core/database/prisma.service.js';
 import {
   Prisma,
@@ -39,8 +40,16 @@ export class PrismaOrderHistoryRepository extends OrderHistoryRepository {
     );
   }
 
-  async findTimeline(orderId: string): Promise<OrderTimeline | null> {
-    const row = await this.prisma.orderView.findUnique({ where: { orderId } });
+  async findTimeline(
+    orderId: string,
+    customerId: string,
+  ): Promise<OrderTimeline | null> {
+    assertCustomerId(customerId);
+    // order_id is the primary key, so this is one lookup; the customer is part
+    // of the WHERE, so a foreign order is indistinguishable from a missing one.
+    const row = await this.prisma.orderView.findFirst({
+      where: { orderId, customerId },
+    });
     if (row === null) return null;
     const events = await this.prisma.orderEventLog.findMany({
       where: { orderId },

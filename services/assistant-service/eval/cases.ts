@@ -4,6 +4,9 @@ import type { EvalCase } from './score.js';
 /** "Now" for every run, so "hoy" is always 2026-11-04 (UTC). */
 export const EVAL_NOW = new Date('2026-11-04T15:00:00.000Z');
 
+/** Who asks in the eval, and who owns every order of the catalog (ADR-0027). */
+export const EVAL_CUSTOMER = 'c-eval';
+
 /** The orders of the catalog, named by what makes each one useful. */
 export const IDS = {
   rejectedToday: '6f1c2a9e-3b4d-4c5e-8f60-71a2b3c4d5e1',
@@ -38,7 +41,7 @@ const NO_STOCK_004 = 'insufficient stock for product SKU-004';
 export const EVAL_ORDERS: OrderDetails[] = [
   {
     orderId: IDS.rejectedToday,
-    customerId: 'c-1',
+    customerId: EVAL_CUSTOMER,
     status: 'rejected',
     stockResult: 'rejected',
     rejectionReason: NO_STOCK_005,
@@ -54,7 +57,7 @@ export const EVAL_ORDERS: OrderDetails[] = [
   },
   {
     orderId: IDS.confirmedToday,
-    customerId: 'c-2',
+    customerId: EVAL_CUSTOMER,
     status: 'confirmed',
     stockResult: 'reserved',
     rejectionReason: null,
@@ -70,7 +73,7 @@ export const EVAL_ORDERS: OrderDetails[] = [
   },
   {
     orderId: IDS.confirmedYesterday,
-    customerId: 'c-3',
+    customerId: EVAL_CUSTOMER,
     status: 'confirmed',
     stockResult: 'reserved',
     rejectionReason: null,
@@ -86,7 +89,7 @@ export const EVAL_ORDERS: OrderDetails[] = [
   },
   {
     orderId: IDS.rejectedTodayOtherSku,
-    customerId: 'c-4',
+    customerId: EVAL_CUSTOMER,
     status: 'rejected',
     stockResult: 'rejected',
     rejectionReason: NO_STOCK_004,
@@ -102,7 +105,7 @@ export const EVAL_ORDERS: OrderDetails[] = [
   },
   {
     orderId: IDS.pendingToday,
-    customerId: 'c-5',
+    customerId: EVAL_CUSTOMER,
     status: 'pending',
     stockResult: null,
     rejectionReason: null,
@@ -114,7 +117,7 @@ export const EVAL_ORDERS: OrderDetails[] = [
   },
   {
     orderId: IDS.rejectedTwoDaysAgo,
-    customerId: 'c-1',
+    customerId: EVAL_CUSTOMER,
     status: 'rejected',
     stockResult: 'rejected',
     rejectionReason: NO_STOCK_005,

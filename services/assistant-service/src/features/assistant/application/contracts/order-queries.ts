@@ -27,7 +27,17 @@ export interface TimeRange {
   until?: Date;
 }
 
-export interface OrderSearch extends TimeRange {
+/**
+ * Which orders a query may see: those of one customer, created in the range.
+ * The customer is mandatory, so a query without that filter can't exist
+ * (ADR-0027). Who the customer is comes from the session token, never from
+ * the model.
+ */
+export interface OrderScope extends TimeRange {
+  customerId: string;
+}
+
+export interface OrderSearch extends OrderScope {
   status?: OrderStatus;
   productId?: string;
   limit: number;
@@ -58,14 +68,18 @@ export interface RejectionSummary {
 
 /** Read-only port over the read model, for the assistant's tools. */
 export abstract class OrderQueries {
-  abstract timeline(orderId: string): Promise<OrderDetails | null>;
+  /** Null for a missing order and for one that belongs to another customer. */
+  abstract timeline(
+    orderId: string,
+    customerId: string,
+  ): Promise<OrderDetails | null>;
 
   /** Most recent activity first. */
   abstract search(filters: OrderSearch): Promise<OrderSummary[]>;
 
   /** Rejected orders grouped by reason, largest group first, up to `limits`. */
   abstract rejectionSummary(
-    range: TimeRange,
+    scope: OrderScope,
     limits: RejectionLimits,
   ): Promise<RejectionSummary>;
 }

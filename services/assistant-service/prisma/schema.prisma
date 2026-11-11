@@ -55,5 +55,8 @@ model OrderView {
   // overwrite each other's changes.
   version         Int          @default(0)
 
+  // Every list the assistant runs is scoped to one customer, newest first
+  // (ADR-0027).
+  @@index([customerId, lastEventAt])
   @@map("order_view")
 }

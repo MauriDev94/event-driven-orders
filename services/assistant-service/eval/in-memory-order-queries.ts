@@ -1,6 +1,7 @@
 import {
   type OrderDetails,
   OrderQueries,
+  type OrderScope,
   type OrderSearch,
   type OrderSummary,
   type RejectionLimits,
@@ -33,7 +34,7 @@ function byLatestActivity(a: OrderSummary, b: OrderSummary): number {
 /**
  * The read model as a fixed list, so the eval runs without Postgres and
  * every run sees the same orders. It follows the contract of the Prisma
- * adapter: ranges are on the creation date, `until` exclusive, and searches
+ * adapter: only the orders of the customer asking, ranges are on the creation date, `until` exclusive, and searches
  * come back with the most recent activity first.
  */
 export class InMemoryOrderQueries extends OrderQueries {
@@ -41,14 +42,22 @@ export class InMemoryOrderQueries extends OrderQueries {
     super();
   }
 
-  async timeline(orderId: string): Promise<OrderDetails | null> {
-    return this.orders.find((order) => order.orderId === orderId) ?? null;
+  async timeline(
+    orderId: string,
+    customerId: string,
+  ): Promise<OrderDetails | null> {
+    return (
+      this.orders.find(
+        (order) => order.orderId === orderId && order.customerId === customerId,
+      ) ?? null
+    );
   }
 
   async search(filters: OrderSearch): Promise<OrderSummary[]> {
     return this.orders
       .filter(
         (order) =>
+          order.customerId === filters.customerId &&
           (filters.status === undefined || order.status === filters.status) &&
           (filters.productId === undefined ||
             (order.items ?? []).some(
@@ -62,11 +71,14 @@ export class InMemoryOrderQueries extends OrderQueries {
   }
 
   async rejectionSummary(
-    range: TimeRange,
+    scope: OrderScope,
     limits: RejectionLimits,
   ): Promise<RejectionSummary> {
     const rejected = this.orders.filter(
-      (order) => order.status === 'rejected' && inRange(order, range),
+      (order) =>
+        order.customerId === scope.customerId &&
+        order.status === 'rejected' &&
+        inRange(order, scope),
     );
     const groups = new Map<string, OrderDetails[]>();
     for (const order of rejected) {

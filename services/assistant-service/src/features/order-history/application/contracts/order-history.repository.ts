@@ -39,7 +39,15 @@ export abstract class OrderHistoryRepository {
     work: (tx: OrderHistoryTransaction) => Promise<T>,
   ): Promise<T>;
 
-  abstract findTimeline(orderId: string): Promise<OrderTimeline | null>;
+  /**
+   * The order of that customer, filtered in the query itself (`WHERE order_id
+   * AND customer_id`): null for a missing order, a foreign one, and one whose
+   * `order.created` hasn't arrived. All three cost the same one query.
+   */
+  abstract findTimeline(
+    orderId: string,
+    customerId: string,
+  ): Promise<OrderTimeline | null>;
 }
 
 /**

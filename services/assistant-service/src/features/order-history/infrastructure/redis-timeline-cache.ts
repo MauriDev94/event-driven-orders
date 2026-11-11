@@ -24,7 +24,8 @@ interface Entry {
 }
 
 /**
- * Cache-aside for the timeline, invalidated by the order's events.
+ * Cache-aside for the timeline, invalidated by the order's events. One entry
+ * per order and customer (SEC94-01); the generation counter is per order.
  *
  * Plain delete-on-write has a race: a read loads the old state from
  * Postgres, an event commits and deletes the key, and then the read stores
@@ -54,9 +55,10 @@ export class RedisTimelineCache extends TimelineCache {
 
   async getOrLoad(
     orderId: string,
+    customerId: string,
     load: () => Promise<OrderTimeline | null>,
   ): Promise<OrderTimeline | null> {
-    const { entryKey, generationKey } = keys(orderId);
+    const { entryKey, generationKey } = keys(orderId, customerId);
     let generation: string;
     try {
       const [cached, current] = await this.redis.client.mGet([
@@ -96,13 +98,14 @@ export class RedisTimelineCache extends TimelineCache {
   }
 
   async invalidate(orderId: string): Promise<void> {
-    const { entryKey, generationKey } = keys(orderId);
+    const generationKey = generationKeyOf(orderId);
     try {
+      // Bumping the order's generation makes every entry of the order a miss,
+      // whoever it was stored for; they die with their TTL.
       await this.redis.client
         .multi()
         .incr(generationKey)
         .expire(generationKey, this.generationTtlSeconds)
-        .del(entryKey)
         .exec();
     } catch (error) {
       this.warn('invalidation', error);
@@ -115,10 +118,18 @@ export class RedisTimelineCache extends TimelineCache {
   }
 }
 
-function keys(orderId: string) {
+/**
+ * Ids never contain `:` (ID_PATTERN), and an entry key always has `:customer:`
+ * in it, so no customer id can make an entry key equal a generation key.
+ */
+function generationKeyOf(orderId: string): string {
+  return `order-timeline:${orderId}:generation`;
+}
+
+function keys(orderId: string, customerId: string) {
   return {
-    entryKey: `order-timeline:${orderId}`,
-    generationKey: `order-timeline:${orderId}:generation`,
+    entryKey: `order-timeline:${orderId}:customer:${customerId}`,
+    generationKey: generationKeyOf(orderId),
   };
 }
 

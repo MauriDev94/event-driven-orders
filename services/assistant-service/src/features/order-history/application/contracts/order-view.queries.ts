@@ -16,10 +16,12 @@ export interface OrderViewSummary {
 }
 
 /**
- * What a query may see. Today only when the order was created (`from`
- * inclusive, `until` exclusive); caps and the customer filter will join here.
+ * What a query may see: the orders of one customer (mandatory, so no query
+ * can skip the filter, ADR-0027), created in the range (`from` inclusive,
+ * `until` exclusive).
  */
 export interface OrderViewScope {
+  customerId: string;
   from?: Date;
   until?: Date;
 }

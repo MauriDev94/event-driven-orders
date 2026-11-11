@@ -1,5 +1,6 @@
 import { GoogleGenAI } from '@google/genai';
 import { Module } from '@nestjs/common';
+import { AuthModule } from '../../core/auth/auth.module.js';
 import { RedisConnection } from '../../core/cache/redis.connection.js';
 import { ENV, type Env } from '../../core/config/env.js';
 import { OrderHistoryModule } from '../order-history/order-history.module.js';
@@ -28,7 +29,7 @@ function createLlmClient(env: Env): LlmClient {
 
 /** DI wiring of the feature (the `di/` package of the Python services). */
 @Module({
-  imports: [OrderHistoryModule],
+  imports: [AuthModule, OrderHistoryModule],
   controllers: [AssistantController],
   providers: [
     { provide: LlmClient, useFactory: createLlmClient, inject: [ENV] },
@@ -48,7 +49,12 @@ function createLlmClient(env: Env): LlmClient {
         llm: LlmClient,
         queries: OrderQueries,
         budget: ModelCallBudget,
-      ) => new AskAssistant(llm, buildOrderTools(queries), budget),
+      ) =>
+        new AskAssistant(
+          llm,
+          (customerId) => buildOrderTools(queries, customerId),
+          budget,
+        ),
       inject: [LlmClient, OrderQueries, ModelCallBudget],
     },
     {

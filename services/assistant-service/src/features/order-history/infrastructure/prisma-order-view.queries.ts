@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../core/database/prisma.service.js';
+import { assertCustomerId } from '../../../core/identifiers.js';
 import type {
   OrderView as OrderViewRow,
   Prisma,
@@ -26,7 +27,9 @@ export class PrismaOrderViewQueries extends OrderViewQueries {
   }
 
   async search(filters: OrderViewSearch): Promise<OrderViewSummary[]> {
+    assertCustomerId(filters.customerId);
     const where: Prisma.OrderViewWhereInput = {
+      customerId: filters.customerId,
       ...createdIn(filters),
       ...(filters.status === undefined ? {} : { status: filters.status }),
       ...(filters.productId === undefined
@@ -45,11 +48,14 @@ export class PrismaOrderViewQueries extends OrderViewQueries {
     scope: OrderViewScope,
     limits: RejectionLimits,
   ): Promise<RejectionStats> {
+    assertCustomerId(scope.customerId);
     // One round trip, whatever the number of reasons: reasons embed a SKU that
     // visitors choose, so a query per group would let them drain the pool.
     // The same reason is why the groups and the product ids are capped here,
     // in SQL, and not after reading them: the rows returned never grow with
     // the data. The totals are computed before the cap, so they stay exact.
+    // The customer filter is in the SQL too (ADR-0027), so the groups, the
+    // caps and the totals are all per customer.
     // The date filter is `createdIn` in SQL: the creation date, or the first
     // event's while `order.created` hasn't arrived. Ordering uses COLLATE "C"
     // so the cut is the same on any database and matches JS's default sort.
@@ -70,6 +76,7 @@ export class PrismaOrderViewQueries extends OrderViewQueries {
           ) AS total
         FROM order_view
         WHERE status = 'rejected'
+          AND customer_id = ${scope.customerId}
           AND (${from}::timestamptz IS NULL
                OR COALESCE(created_at, last_event_at) >= ${from}::timestamptz)
           AND (${until}::timestamptz IS NULL
