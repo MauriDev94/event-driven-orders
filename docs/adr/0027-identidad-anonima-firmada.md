@@ -1,6 +1,6 @@
 # ADR-0027 — Identidad anónima firmada: cada visitante ve solo sus pedidos
 
-**Estado:** Aceptada · **Fecha:** 2026-11-10 · **Ámbito:** `order-service`, `assistant-service`, `docker-compose*.yml`, `scripts/generate_env.py`, CI · **Modifica parcialmente:** [ADR-0022](0022-asistente-con-agente-y-herramientas-de-solo-lectura.md)
+**Estado:** Aceptada · Parcialmente reemplazada por [ADR-0028](0028-cache-del-timeline-por-pedido-y-cliente.md) · **Fecha:** 2026-11-10 · **Ámbito:** `order-service`, `assistant-service`, `docker-compose*.yml`, `scripts/generate_env.py`, CI · **Modifica parcialmente:** [ADR-0022](0022-asistente-con-agente-y-herramientas-de-solo-lectura.md)
 
 ## Contexto
 
