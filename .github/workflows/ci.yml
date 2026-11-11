@@ -340,6 +340,63 @@ jobs:
         run: uv run --frozen --package shared python scripts/export_contract_fixtures.py --check
 
   # ---------------------------------------------------------------------------
+  # Session token interop (ADR-0027, section 7). order-service signs the token
+  # with PyJWT and assistant-service verifies it with jose; nothing else checks
+  # that the two libraries agree on the claims, the algorithm and the key. This
+  # job generates a secret at run time, issues a token with order-service's
+  # real JwtTokenIssuer (scripts/ci_issue_session_tokens.py) and verifies it
+  # with the guard's real code (services/assistant-service/ci/verify-session-tokens.ts).
+  # The same script also checks that a token signed with another secret is
+  # refused. The secret is masked and neither script prints a token or the key.
+  # ---------------------------------------------------------------------------
+  session-token-interop:
+    name: Session token (PyJWT issues, jose verifies)
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "0.12.5"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: services/assistant-service/package-lock.json
+
+      - name: Sync order-service
+        run: uv sync --frozen --package order-service
+
+      - name: Install assistant-service dependencies
+        working-directory: services/assistant-service
+        run: npm ci
+
+      - name: Generate a secret and issue the tokens with order-service
+        run: |
+          secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          echo "::add-mask::$secret"
+          echo "AUTH_TOKEN_SECRET=$secret" >> "$GITHUB_ENV"
+          AUTH_TOKEN_SECRET="$secret" uv run --package order-service \
+            python scripts/ci_issue_session_tokens.py "$RUNNER_TEMP/tokens" ci-customer
+
+      - name: Verify them with assistant-service's guard code
+        working-directory: services/assistant-service
+        run: npx tsx ci/verify-session-tokens.ts "$RUNNER_TEMP/tokens" ci-customer
+
+  # ---------------------------------------------------------------------------
   # Build the four images and smoke-test them.
   #
   # Nothing else in this pipeline touches Docker: quality and tests run against
