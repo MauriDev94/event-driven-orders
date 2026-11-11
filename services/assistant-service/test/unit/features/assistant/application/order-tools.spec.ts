@@ -11,6 +11,8 @@ import {
   StubOrderQueries,
 } from '../../../../support/stub-order-queries.js';
 
+const CUSTOMER = 'customer-me';
+
 describe('order tools', () => {
   let queries: StubOrderQueries;
   let tools: Map<string, AssistantTool>;
@@ -18,7 +20,7 @@ describe('order tools', () => {
   beforeEach(() => {
     queries = new StubOrderQueries();
     tools = new Map(
-      buildOrderTools(queries).map((tool) => [tool.spec.name, tool]),
+      buildOrderTools(queries, CUSTOMER).map((tool) => [tool.spec.name, tool]),
     );
   });
 
@@ -223,6 +225,7 @@ describe('order tools', () => {
 
       expect(queries.searches).toEqual([
         {
+          customerId: CUSTOMER,
           status: 'rejected',
           from: new Date('2026-10-31T00:00:00.000Z'),
           // A date-only `to` includes that whole day.
@@ -268,6 +271,7 @@ describe('order tools', () => {
 
       expect(queries.searches).toEqual([
         {
+          customerId: CUSTOMER,
           from: new Date('2026-10-31T10:00:00.000Z'),
           // An explicit date-time `to` is inclusive.
           until: new Date('2026-10-31T14:00:00.001Z'),
@@ -318,7 +322,7 @@ describe('order tools', () => {
       const run = await tool('rejection_summary').run({ from: '2026-10-31' });
 
       expect(queries.rejectionRanges).toEqual([
-        { from: new Date('2026-10-31T00:00:00.000Z') },
+        { customerId: CUSTOMER, from: new Date('2026-10-31T00:00:00.000Z') },
       ]);
       expect(run.output).toEqual({
         total_rejected: 3,
@@ -408,6 +412,82 @@ describe('order tools', () => {
           product_ids_total: MAX_PRODUCT_IDS_PER_GROUP + 30,
         }),
       ]);
+    });
+  });
+
+  describe('customer scope (ADR-0027)', () => {
+    const OTHER = 'customer-other';
+
+    it('asks for the timeline as the customer the tools were built for', async () => {
+      const orderId = randomUUID();
+
+      await tool('get_order_timeline').run({ order_id: orderId });
+
+      expect(queries.timelines).toEqual([{ orderId, customerId: CUSTOMER }]);
+    });
+
+    it.each([
+      ['get_order_timeline', { order_id: randomUUID() }],
+      ['search_orders', {}],
+      ['rejection_summary', {}],
+    ])('discards a customer_id the model invents in %s', async (name, args) => {
+      await tool(name).run({ ...args, customer_id: OTHER, customerId: OTHER });
+
+      const seen = [
+        ...queries.timelines,
+        ...queries.searches,
+        ...queries.rejectionRanges,
+      ];
+      expect(seen).toHaveLength(1);
+      expect(seen[0]).toMatchObject({ customerId: CUSTOMER });
+    });
+
+    it('does not offer a customer parameter to the model', () => {
+      for (const { spec } of tools.values()) {
+        expect(JSON.stringify(spec.parameters)).not.toMatch(/customer/i);
+      }
+    });
+
+    it("answers found: false for an order that is not the customer's, like a missing one", async () => {
+      // The port returns null for a foreign order: the query is scoped.
+      const run = await tool('get_order_timeline').run({ order_id: 'o-x' });
+
+      expect(run.output).toEqual({ found: false, order_id: 'o-x' });
+      expect(run.evidence).toEqual([]);
+    });
+
+    it.each([
+      ['a NUL', 'a\u0000b'],
+      ['12,000 characters', 'a'.repeat(12_000)],
+      ['a generation suffix', `${randomUUID()}:generation`],
+    ])(
+      'answers found: false to an order_id with %s, without a query (SEC94-03)',
+      async (_name, orderId) => {
+        const run = await tool('get_order_timeline').run({ order_id: orderId });
+
+        expect(run.output).toEqual({ found: false });
+        expect(run.evidence).toEqual([]);
+        expect(queries.timelines).toEqual([]);
+      },
+    );
+
+    it('never sends the customer id to the model', async () => {
+      const orderId = randomUUID();
+      queries.details.set(orderId, {
+        ...orderSummary(orderId, { customerId: CUSTOMER }),
+        items: null,
+        events: [],
+      });
+      queries.orders = [orderSummary(orderId, { customerId: CUSTOMER })];
+
+      const runs = [
+        await tool('get_order_timeline').run({ order_id: orderId }),
+        await tool('search_orders').run({}),
+      ];
+
+      for (const run of runs) {
+        expect(JSON.stringify(run.output)).not.toMatch(/customer/i);
+      }
     });
   });
 });

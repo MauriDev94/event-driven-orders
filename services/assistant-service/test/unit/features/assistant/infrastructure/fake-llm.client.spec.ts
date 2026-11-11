@@ -8,6 +8,8 @@ import {
 } from '../../../../support/stub-order-queries.js';
 import { StubModelCallBudget } from '../../../../support/stub-model-call-budget.js';
 
+const CUSTOMER = 'customer-me';
+
 describe('FakeLlmClient', () => {
   let queries: StubOrderQueries;
   let assistant: AskAssistant;
@@ -16,7 +18,7 @@ describe('FakeLlmClient', () => {
     queries = new StubOrderQueries();
     assistant = new AskAssistant(
       new FakeLlmClient(),
-      buildOrderTools(queries),
+      (customerId) => buildOrderTools(queries, customerId),
       new StubModelCallBudget(),
     );
   });
@@ -29,7 +31,10 @@ describe('FakeLlmClient', () => {
       events: [],
     });
 
-    const result = await assistant.execute(`¿Por qué se rechazó ${orderId}?`);
+    const result = await assistant.execute(
+      `¿Por qué se rechazó ${orderId}?`,
+      CUSTOMER,
+    );
 
     expect(result).toEqual({
       answer: `El pedido ${orderId} está rechazado (motivo: insufficient stock for product SKU-005).`,
@@ -44,7 +49,10 @@ describe('FakeLlmClient', () => {
   it('says so when the order is unknown', async () => {
     const orderId = randomUUID();
 
-    const result = await assistant.execute(`¿Y el pedido ${orderId}?`);
+    const result = await assistant.execute(
+      `¿Y el pedido ${orderId}?`,
+      CUSTOMER,
+    );
 
     expect(result).toMatchObject({
       answer: `No encontré el pedido ${orderId}.`,
@@ -63,9 +71,9 @@ describe('FakeLlmClient', () => {
       orderSummary(second),
     ];
 
-    const result = await assistant.execute('¿Qué pasó hoy?');
+    const result = await assistant.execute('¿Qué pasó hoy?', CUSTOMER);
 
-    expect(queries.searches).toEqual([{ limit: 5 }]);
+    expect(queries.searches).toEqual([{ customerId: CUSTOMER, limit: 5 }]);
     expect(result).toMatchObject({
       answer: `Encontré 2 pedidos: ${first} (confirmado), ${second} (rechazado).`,
       outcome: 'answered',
@@ -74,7 +82,7 @@ describe('FakeLlmClient', () => {
   });
 
   it('says so when there are no orders', async () => {
-    const result = await assistant.execute('¿Qué pasó hoy?');
+    const result = await assistant.execute('¿Qué pasó hoy?', CUSTOMER);
 
     expect(result).toMatchObject({
       answer: 'No encontré pedidos.',

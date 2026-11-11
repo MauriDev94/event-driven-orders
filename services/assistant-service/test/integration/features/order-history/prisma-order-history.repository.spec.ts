@@ -97,7 +97,7 @@ describe('PrismaOrderHistoryRepository', () => {
   });
 
   it('returns no timeline for an unknown order', async () => {
-    expect(await repository.findTimeline('missing')).toBeNull();
+    expect(await repository.findTimeline('missing', 'c-1')).toBeNull();
   });
 
   it('returns the view and its events in the order they happened', async () => {
@@ -108,7 +108,7 @@ describe('PrismaOrderHistoryRepository', () => {
     await project(reserved);
     await project(created);
 
-    const timeline = await repository.findTimeline('o-1');
+    const timeline = await repository.findTimeline('o-1', 'c-1');
 
     expect(timeline?.view.toState()).toEqual({
       orderId: 'o-1',
@@ -135,7 +135,7 @@ describe('PrismaOrderHistoryRepository', () => {
       stockRejected('o-2', 'insufficient stock for product SKU-005'),
     );
 
-    const timeline = await repository.findTimeline('o-2');
+    const timeline = await repository.findTimeline('o-2', 'c-1');
 
     expect(timeline?.view).toMatchObject({
       stockResult: 'rejected',

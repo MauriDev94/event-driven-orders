@@ -5,6 +5,8 @@ import { OrderView } from '../../../../src/features/order-history/domain/order-v
 import { RedisTimelineCache } from '../../../../src/features/order-history/infrastructure/redis-timeline-cache.js';
 import { randomUUID } from 'node:crypto';
 
+const CUSTOMER = 'c-1';
+
 function timeline(orderId: string, events = 1): OrderTimeline {
   const view = OrderView.restore({
     orderId,
@@ -53,8 +55,8 @@ describe('RedisTimelineCache', () => {
     const stored = timeline(orderId, 2);
     const load = vi.fn(async () => stored);
 
-    const first = await cache.getOrLoad(orderId, load);
-    const second = await cache.getOrLoad(orderId, load);
+    const first = await cache.getOrLoad(orderId, CUSTOMER, load);
+    const second = await cache.getOrLoad(orderId, CUSTOMER, load);
 
     expect(load).toHaveBeenCalledTimes(1);
     expect(first).toBe(stored);
@@ -66,18 +68,18 @@ describe('RedisTimelineCache', () => {
     const orderId = randomUUID();
     const load = vi.fn(async () => null);
 
-    await cache.getOrLoad(orderId, load);
-    await cache.getOrLoad(orderId, load);
+    await cache.getOrLoad(orderId, CUSTOMER, load);
+    await cache.getOrLoad(orderId, CUSTOMER, load);
 
     expect(load).toHaveBeenCalledTimes(2);
   });
 
   it('loads again after the order is invalidated', async () => {
     const orderId = randomUUID();
-    await cache.getOrLoad(orderId, async () => timeline(orderId, 1));
+    await cache.getOrLoad(orderId, CUSTOMER, async () => timeline(orderId, 1));
 
     await cache.invalidate(orderId);
-    const fresh = await cache.getOrLoad(orderId, async () =>
+    const fresh = await cache.getOrLoad(orderId, CUSTOMER, async () =>
       timeline(orderId, 2),
     );
 
@@ -88,17 +90,81 @@ describe('RedisTimelineCache', () => {
     const orderId = randomUUID();
     // The read gets the old state from Postgres, the projection commits and
     // invalidates, and only then does the read write to the cache.
-    const stale = await cache.getOrLoad(orderId, async () => {
+    const stale = await cache.getOrLoad(orderId, CUSTOMER, async () => {
       await cache.invalidate(orderId);
       return timeline(orderId, 1);
     });
 
-    const next = await cache.getOrLoad(orderId, async () =>
+    const next = await cache.getOrLoad(orderId, CUSTOMER, async () =>
       timeline(orderId, 2),
     );
 
     expect(stale?.events).toHaveLength(1);
     expect(next?.events).toHaveLength(2);
+  });
+
+  describe('per customer (SEC94-01)', () => {
+    const OTHER = 'c-2';
+
+    it('keeps one entry per order and customer, and never serves one to the other', async () => {
+      const orderId = randomUUID();
+      const mine = vi.fn(async () => timeline(orderId, 1));
+      const theirs = vi.fn(async () => null);
+
+      await cache.getOrLoad(orderId, CUSTOMER, mine);
+      await cache.getOrLoad(orderId, CUSTOMER, mine);
+      const foreign = await cache.getOrLoad(orderId, OTHER, theirs);
+      await cache.getOrLoad(orderId, OTHER, theirs);
+
+      expect(mine).toHaveBeenCalledTimes(1);
+      expect(foreign).toBeNull();
+      expect(theirs).toHaveBeenCalledTimes(2);
+    });
+
+    it('writes no key for a customer whose load found nothing', async () => {
+      const orderId = randomUUID();
+      await cache.getOrLoad(orderId, CUSTOMER, async () =>
+        timeline(orderId, 1),
+      );
+
+      await cache.getOrLoad(orderId, OTHER, async () => null);
+
+      const keys = await redis.client.keys(`order-timeline:${orderId}*`);
+      expect(keys.sort()).toEqual(
+        [`order-timeline:${orderId}:customer:${CUSTOMER}`].sort(),
+      );
+    });
+
+    it('still invalidates the entry of the owner', async () => {
+      const orderId = randomUUID();
+      await cache.getOrLoad(orderId, CUSTOMER, async () =>
+        timeline(orderId, 1),
+      );
+
+      await cache.invalidate(orderId);
+      const fresh = await cache.getOrLoad(orderId, CUSTOMER, async () =>
+        timeline(orderId, 2),
+      );
+
+      expect(fresh?.events).toHaveLength(2);
+    });
+
+    it('cannot mix an entry key with the generation key, whatever the customer id', async () => {
+      const orderId = randomUUID();
+      await cache.getOrLoad(orderId, 'generation', async () =>
+        timeline(orderId, 1),
+      );
+
+      await cache.invalidate(orderId);
+      const fresh = await cache.getOrLoad(orderId, 'generation', async () =>
+        timeline(orderId, 2),
+      );
+
+      expect(fresh?.events).toHaveLength(2);
+      expect(
+        await redis.client.get(`order-timeline:${orderId}:generation`),
+      ).toBe('1');
+    });
   });
 
   describe('size cap', () => {
@@ -112,20 +178,24 @@ describe('RedisTimelineCache', () => {
       const orderId = randomUUID();
       const load = vi.fn(async () => big(orderId, 70_000));
 
-      const first = await cache.getOrLoad(orderId, load);
-      await cache.getOrLoad(orderId, load);
+      const first = await cache.getOrLoad(orderId, CUSTOMER, load);
+      await cache.getOrLoad(orderId, CUSTOMER, load);
 
       expect(first?.events).toHaveLength(1);
       expect(load).toHaveBeenCalledTimes(2);
-      expect(await redis.client.exists(`order-timeline:${orderId}`)).toBe(0);
+      expect(
+        await redis.client.exists(
+          `order-timeline:${orderId}:customer:${CUSTOMER}`,
+        ),
+      ).toBe(0);
     });
 
     it('still caches an entry under the cap', async () => {
       const orderId = randomUUID();
       const load = vi.fn(async () => big(orderId, 20_000));
 
-      await cache.getOrLoad(orderId, load);
-      await cache.getOrLoad(orderId, load);
+      await cache.getOrLoad(orderId, CUSTOMER, load);
+      await cache.getOrLoad(orderId, CUSTOMER, load);
 
       expect(load).toHaveBeenCalledTimes(1);
     });
@@ -138,10 +208,10 @@ describe('RedisTimelineCache', () => {
       const asciiId = randomUUID();
       const asciiLoad = vi.fn(async () => big(asciiId, 700));
 
-      await small.getOrLoad(orderId, load);
-      await small.getOrLoad(orderId, load);
-      await small.getOrLoad(asciiId, asciiLoad);
-      await small.getOrLoad(asciiId, asciiLoad);
+      await small.getOrLoad(orderId, CUSTOMER, load);
+      await small.getOrLoad(orderId, CUSTOMER, load);
+      await small.getOrLoad(asciiId, CUSTOMER, asciiLoad);
+      await small.getOrLoad(asciiId, CUSTOMER, asciiLoad);
 
       expect(load).toHaveBeenCalledTimes(2);
       expect(asciiLoad).toHaveBeenCalledTimes(1);
@@ -151,8 +221,10 @@ describe('RedisTimelineCache', () => {
       const orderId = randomUUID();
       await cache.invalidate(orderId);
 
-      await cache.getOrLoad(orderId, async () => big(orderId, 70_000));
-      const next = await cache.getOrLoad(orderId, async () =>
+      await cache.getOrLoad(orderId, CUSTOMER, async () =>
+        big(orderId, 70_000),
+      );
+      const next = await cache.getOrLoad(orderId, CUSTOMER, async () =>
         timeline(orderId, 2),
       );
 
@@ -168,9 +240,9 @@ describe('RedisTimelineCache', () => {
     const orderId = randomUUID();
     const load = vi.fn(async () => timeline(orderId));
 
-    await shortLived.getOrLoad(orderId, load);
+    await shortLived.getOrLoad(orderId, CUSTOMER, load);
     await new Promise((resolve) => setTimeout(resolve, 1_200));
-    await shortLived.getOrLoad(orderId, load);
+    await shortLived.getOrLoad(orderId, CUSTOMER, load);
 
     expect(load).toHaveBeenCalledTimes(2);
   });
@@ -196,7 +268,9 @@ describe('RedisTimelineCache', () => {
       const offline = new RedisTimelineCache(down);
       const load = vi.fn(async () => timeline(orderId));
 
-      await expect(offline.getOrLoad(orderId, load)).resolves.not.toBeNull();
+      await expect(
+        offline.getOrLoad(orderId, CUSTOMER, load),
+      ).resolves.not.toBeNull();
       await expect(offline.invalidate(orderId)).resolves.toBeUndefined();
       expect(load).toHaveBeenCalledTimes(1);
     });

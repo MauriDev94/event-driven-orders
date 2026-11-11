@@ -22,6 +22,8 @@ import {
 
 const SKU_005_REASON = 'insufficient stock for product SKU-005';
 const SKU_004_REASON = 'insufficient stock for product SKU-004';
+/** The customer of the support events. */
+const CUSTOMER = 'c-1';
 const LIMITS = { groups: 10, productIdsPerGroup: 20 };
 
 // The queries behind the assistant's tools, against real Postgres (ADR-0008):
@@ -113,7 +115,7 @@ describe('ReadModelOrderQueries', () => {
         ['SKU-005'],
       );
 
-      const details = await queries.timeline(orderId);
+      const details = await queries.timeline(orderId, CUSTOMER);
 
       expect(details).toMatchObject({
         orderId,
@@ -135,7 +137,7 @@ describe('ReadModelOrderQueries', () => {
     });
 
     it('returns null for an unknown order', async () => {
-      expect(await queries.timeline(randomUUID())).toBeNull();
+      expect(await queries.timeline(randomUUID(), CUSTOMER)).toBeNull();
     });
   });
 
@@ -147,8 +149,16 @@ describe('ReadModelOrderQueries', () => {
         'SKU-005',
       ]);
 
-      const all = await queries.search({ status: 'confirmed', limit: 10 });
-      const one = await queries.search({ status: 'confirmed', limit: 1 });
+      const all = await queries.search({
+        customerId: CUSTOMER,
+        status: 'confirmed',
+        limit: 10,
+      });
+      const one = await queries.search({
+        customerId: CUSTOMER,
+        status: 'confirmed',
+        limit: 1,
+      });
 
       expect(all.map((order) => order.orderId)).toEqual([newer, older]);
       expect(one.map((order) => order.orderId)).toEqual([newer]);
@@ -169,6 +179,7 @@ describe('ReadModelOrderQueries', () => {
       await confirmedOrder('2026-11-01T00:00:00.000Z');
 
       const found = await queries.search({
+        customerId: CUSTOMER,
         from: new Date('2026-10-31T00:00:00.000Z'),
         until: new Date('2026-11-01T00:00:00.000Z'),
         limit: 10,
@@ -184,7 +195,11 @@ describe('ReadModelOrderQueries', () => {
         'SKU-003',
       );
 
-      const found = await queries.search({ productId: 'SKU-003', limit: 10 });
+      const found = await queries.search({
+        customerId: CUSTOMER,
+        productId: 'SKU-003',
+        limit: 10,
+      });
 
       expect(found.map((order) => order.orderId)).toEqual([withProduct]);
     });
@@ -209,7 +224,10 @@ describe('ReadModelOrderQueries', () => {
       );
       await confirmedOrder('2026-10-31T13:00:00.000Z');
 
-      const summary = await queries.rejectionSummary({}, LIMITS);
+      const summary = await queries.rejectionSummary(
+        { customerId: CUSTOMER },
+        LIMITS,
+      );
 
       expect(summary).toEqual({
         totalRejected: 3,
@@ -244,6 +262,7 @@ describe('ReadModelOrderQueries', () => {
       ) =>
         Array.from({ length: count }, () => ({
           orderId: randomUUID(),
+          customerId: CUSTOMER,
           status: 'rejected' as const,
           stockResult: 'rejected' as const,
           rejectionReason: reason,
@@ -260,7 +279,10 @@ describe('ReadModelOrderQueries', () => {
       const second = rejected(SKU_004_REASON, 300, recent, 'SKU-004');
       await prisma.orderView.createMany({ data: [...first, ...second] });
 
-      const summary = await queries.rejectionSummary({}, LIMITS);
+      const summary = await queries.rejectionSummary(
+        { customerId: CUSTOMER },
+        LIMITS,
+      );
 
       expect(summary.totalRejected).toBe(1_400);
       expect(
@@ -284,6 +306,7 @@ describe('ReadModelOrderQueries', () => {
       const at = new Date('2026-10-31T10:00:00.000Z');
       const row = (rejectionReason: string | null) => ({
         orderId: randomUUID(),
+        customerId: CUSTOMER,
         status: 'rejected' as const,
         rejectionReason,
         createdAt: at,
@@ -292,7 +315,10 @@ describe('ReadModelOrderQueries', () => {
       const rows = [row(null), row(null), row('unknown')];
       await prisma.orderView.createMany({ data: rows });
 
-      const summary = await queries.rejectionSummary({}, LIMITS);
+      const summary = await queries.rejectionSummary(
+        { customerId: CUSTOMER },
+        LIMITS,
+      );
 
       expect(summary.totalRejected).toBe(3);
       expect(summary.groups).toHaveLength(1);
@@ -305,6 +331,7 @@ describe('ReadModelOrderQueries', () => {
     it('counts an order without created_at by its last event when a range is given', async () => {
       const row = (lastEventAt: string) => ({
         orderId: randomUUID(),
+        customerId: CUSTOMER,
         status: 'rejected' as const,
         rejectionReason: SKU_005_REASON,
         createdAt: null,
@@ -316,6 +343,7 @@ describe('ReadModelOrderQueries', () => {
 
       const summary = await queries.rejectionSummary(
         {
+          customerId: CUSTOMER,
           from: new Date('2026-10-31T00:00:00.000Z'),
           until: new Date('2026-11-01T00:00:00.000Z'),
         },
@@ -337,9 +365,7 @@ describe('ReadModelOrderQueries', () => {
       );
 
       const summary = await queries.rejectionSummary(
-        {
-          from: new Date('2026-10-31T00:00:00.000Z'),
-        },
+        { customerId: CUSTOMER, from: new Date('2026-10-31T00:00:00.000Z') },
         LIMITS,
       );
 
@@ -352,6 +378,7 @@ describe('ReadModelOrderQueries', () => {
       function distinctReasons(count: number, at: Date) {
         return Array.from({ length: count }, (_, i) => ({
           orderId: randomUUID(),
+          customerId: CUSTOMER,
           status: 'rejected' as const,
           rejectionReason: `insufficient stock for product SKU-${i}`,
           items: [{ product_id: `SKU-${i}`, quantity: 1, unit_price: '1.00' }],
@@ -366,6 +393,7 @@ describe('ReadModelOrderQueries', () => {
         const big = (reason: string, n: number) =>
           Array.from({ length: n }, () => ({
             orderId: randomUUID(),
+            customerId: CUSTOMER,
             status: 'rejected' as const,
             rejectionReason: reason,
             createdAt: at,
@@ -380,7 +408,7 @@ describe('ReadModelOrderQueries', () => {
         });
 
         const summary = await queries.rejectionSummary(
-          {},
+          { customerId: CUSTOMER },
           {
             groups: 5,
             productIdsPerGroup: 20,
@@ -408,7 +436,10 @@ describe('ReadModelOrderQueries', () => {
         const at = new Date('2026-10-31T10:00:00.000Z');
         await prisma.orderView.createMany({ data: distinctReasons(3, at) });
 
-        const summary = await queries.rejectionSummary({}, LIMITS);
+        const summary = await queries.rejectionSummary(
+          { customerId: CUSTOMER },
+          LIMITS,
+        );
 
         expect(summary.totalGroups).toBe(3);
         expect(summary.groups).toHaveLength(3);
@@ -425,6 +456,7 @@ describe('ReadModelOrderQueries', () => {
           data: [
             {
               orderId: randomUUID(),
+              customerId: CUSTOMER,
               status: 'rejected' as const,
               rejectionReason: SKU_005_REASON,
               items,
@@ -435,7 +467,7 @@ describe('ReadModelOrderQueries', () => {
         });
 
         const summary = await queries.rejectionSummary(
-          {},
+          { customerId: CUSTOMER },
           {
             groups: 10,
             productIdsPerGroup: 5,

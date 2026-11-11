@@ -10,6 +10,7 @@ import { RabbitMQConnection } from '../../src/core/messaging/rabbitmq.connection
 import { LlmClient } from '../../src/features/assistant/application/contracts/llm-client.js';
 import { ModelCallBudget } from '../../src/features/assistant/application/contracts/model-call-budget.js';
 import { FakeBroker } from './fake-broker.js';
+import { TEST_AUTH_SECRET } from './session-token.js';
 
 export interface TestAppOptions {
   databaseUrl: string;
@@ -29,6 +30,7 @@ export async function createTestApp(
     RABBITMQ_URL: 'amqp://broker@localhost:5672/',
     REDIS_URL: inject('redisUrl'),
     LOG_LEVEL: 'silent',
+    AUTH_TOKEN_SECRET: TEST_AUTH_SECRET,
     // The real budget is shared by every test file in the run, so the
     // per-minute cap stays out of the way unless a test lowers it.
     LLM_MINUTE_CALL_LIMIT: '1000',

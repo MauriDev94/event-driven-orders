@@ -1,6 +1,11 @@
 import type { OrderTimeline } from '../../src/features/order-history/application/contracts/order-history.repository.js';
 import { TimelineCache } from '../../src/features/order-history/application/contracts/timeline-cache.js';
 
+/** The key of an entry in `entries`: one per order and customer. */
+export function entryKey(orderId: string, customerId: string): string {
+  return `${orderId}|${customerId}`;
+}
+
 /** Fake of the cache port: a map, with the same "don't cache misses" rule. */
 export class InMemoryTimelineCache extends TimelineCache {
   readonly entries = new Map<string, OrderTimeline>();
@@ -10,18 +15,22 @@ export class InMemoryTimelineCache extends TimelineCache {
 
   async getOrLoad(
     orderId: string,
+    customerId: string,
     load: () => Promise<OrderTimeline | null>,
   ): Promise<OrderTimeline | null> {
-    const hit = this.entries.get(orderId);
+    const key = entryKey(orderId, customerId);
+    const hit = this.entries.get(key);
     if (hit !== undefined) return hit;
     const loaded = await load();
-    if (loaded !== null) this.entries.set(orderId, loaded);
+    if (loaded !== null) this.entries.set(key, loaded);
     return loaded;
   }
 
   async invalidate(orderId: string): Promise<void> {
     this.onInvalidate(orderId);
     this.invalidated.push(orderId);
-    this.entries.delete(orderId);
+    for (const key of this.entries.keys()) {
+      if (key.startsWith(`${orderId}|`)) this.entries.delete(key);
+    }
   }
 }

@@ -18,8 +18,11 @@ import {
 } from '../support/order-events.js';
 import { answer, ScriptedLlmClient } from '../support/scripted-llm-client.js';
 import { StubModelCallBudget } from '../support/stub-model-call-budget.js';
+import { bearer } from '../support/session-token.js';
 import { createTestApp, randomIp } from '../support/test-app.js';
 
+/** The customer of the support events (orderCreated and the others). */
+const CUSTOMER = 'c-1';
 const REASON = 'insufficient stock for product SKU-005';
 
 describe('assistant HTTP API', () => {
@@ -47,6 +50,7 @@ describe('assistant HTTP API', () => {
     return request(target.getHttpServer())
       .post('/v1/assistant/ask')
       .set('X-Forwarded-For', ip)
+      .set('Authorization', bearer(CUSTOMER))
       .send(body);
   }
 
@@ -255,6 +259,7 @@ describe('assistant HTTP API', () => {
 
         await request(noRedis.getHttpServer())
           .get(`/v1/assistant/orders/${orderId}/timeline`)
+          .set('Authorization', bearer(CUSTOMER))
           .expect(200);
         const health = await request(noRedis.getHttpServer())
           .get('/health')
@@ -279,6 +284,7 @@ describe('assistant HTTP API', () => {
       const timeline = (from = ip) =>
         request(limited.getHttpServer())
           .get(`/v1/assistant/orders/${randomUUID()}/timeline`)
+          .set('Authorization', bearer(CUSTOMER))
           .set('X-Forwarded-For', from);
       try {
         await timeline().expect(404);
@@ -309,6 +315,7 @@ describe('assistant HTTP API', () => {
         for (let i = 0; i < 2; i++) {
           await request(noRedis.getHttpServer())
             .get('/v1/assistant/orders/missing/timeline')
+            .set('Authorization', bearer(CUSTOMER))
             .expect(404);
         }
       } finally {
@@ -323,6 +330,7 @@ describe('assistant HTTP API', () => {
       const timeline = () =>
         request(app.getHttpServer())
           .get(`/v1/assistant/orders/${orderId}/timeline`)
+          .set('Authorization', bearer(CUSTOMER))
           .expect(200);
       expect((await timeline()).body.events).toHaveLength(1);
 

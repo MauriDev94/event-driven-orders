@@ -1,11 +1,11 @@
 import {
   type OrderDetails,
   OrderQueries,
+  type OrderScope,
   type OrderSearch,
   type OrderSummary,
   type RejectionLimits,
   type RejectionSummary,
-  type TimeRange,
 } from '../../src/features/assistant/application/contracts/order-queries.js';
 
 /** OrderQueries with canned answers that records what it was asked. */
@@ -17,11 +17,16 @@ export class StubOrderQueries extends OrderQueries {
     totalGroups: 0,
     groups: [],
   };
+  readonly timelines: { orderId: string; customerId: string }[] = [];
   readonly searches: OrderSearch[] = [];
-  readonly rejectionRanges: TimeRange[] = [];
+  readonly rejectionRanges: OrderScope[] = [];
   readonly rejectionLimits: RejectionLimits[] = [];
 
-  async timeline(orderId: string): Promise<OrderDetails | null> {
+  async timeline(
+    orderId: string,
+    customerId: string,
+  ): Promise<OrderDetails | null> {
+    this.timelines.push({ orderId, customerId });
     return this.details.get(orderId) ?? null;
   }
 
@@ -31,11 +36,11 @@ export class StubOrderQueries extends OrderQueries {
   }
 
   async rejectionSummary(
-    range: TimeRange,
+    scope: OrderScope,
     limits: RejectionLimits,
   ): Promise<RejectionSummary> {
     this.rejectionLimits.push(limits);
-    this.rejectionRanges.push(range);
+    this.rejectionRanges.push(scope);
     return this.rejections;
   }
 }
