@@ -111,7 +111,7 @@ Ajustes para que el stack corra en la VM gratis de Oracle, que es ARM (Ampere A1
 
   - [ ] La sesión anónima en `order-service` y los pedidos visibles solo para su dueño: `POST /v1/session`, `get_current_customer`, `AUTH_TOKEN_SECRET` en compose y en `make env` (issue #93).
   - [ ] `assistant-service` verifica la sesión y filtra todo por cliente: guard con `jose`, dueño en el timeline, `customerId` obligatorio en los puertos, índice y `redact` en los logs, más el job de CI que cruza PyJWT con `jose` (issue #94).
-  - [ ] Casos de aislamiento entre clientes en el eval del asistente (issue #95).
+  - [x] Casos de aislamiento entre clientes en el eval del asistente (issue #95). El catálogo suma dos pedidos de otro cliente, con la actividad más reciente, y tres casos adversariales (`other-customer-*`) que no pueden citarlos. `fake` pasa de 5/16 a 8/19. Con Gemini dio 18/19, 18/19 y 17/19: ninguna corrida citó un pedido ajeno, pero "los pedidos de todos los clientes" filtra el prompt (el servidor lo reemplaza, `leaked`); queda anotado en el #90.
   - [ ] El e2e de dos visitantes y la documentación de la autenticación: README, CLAUDE.md y `docs/deploy.md` (issue #96).
 
   La cookie `HttpOnly` y `GET /v1/orders` ("mis pedidos") quedan para el Paso 7, que también necesita la autenticación.

@@ -27,13 +27,17 @@ describe('verifySessionToken', () => {
   });
 
   describe('clock tolerance (30 s, like the PyJWT leeway)', () => {
+    // `now` is read when the file loads; on a busy machine the test can run
+    // seconds later, so the verifier gets that same clock, not the real one.
+    const clock = new Date(now * 1000);
+
     it.each([
       ['an exp 29 s in the past', { exp: now - 29 }],
       ['an iat 29 s in the future', { iat: now + 29, exp: now + 3600 }],
       ['an nbf 29 s in the future', { nbf: now + 29 }],
     ])('accepts %s', async (_name, claims) => {
       await expect(
-        verifySessionToken(signTestToken('c-1', { claims }), key),
+        verifySessionToken(signTestToken('c-1', { claims }), key, clock),
       ).resolves.toBe('c-1');
     });
 
@@ -42,7 +46,7 @@ describe('verifySessionToken', () => {
       ['an iat 31 s in the future', { iat: now + 31, exp: now + 3600 }],
     ])('refuses %s', async (_name, claims) => {
       await expect(
-        verifySessionToken(signTestToken('c-1', { claims }), key),
+        verifySessionToken(signTestToken('c-1', { claims }), key, clock),
       ).rejects.toBeInstanceOf(InvalidTokenError);
     });
 
