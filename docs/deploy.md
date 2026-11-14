@@ -8,7 +8,7 @@ Esta guía no tiene IPs ni contraseñas reales. Donde dice `<ip>`, `<vm>` o `<DO
 
 | URL | Qué es | Acceso |
 |---|---|---|
-| `https://<DOMAIN>` | API de `order-service` y Swagger (`/docs`) | Público |
+| `https://<DOMAIN>` | API de `order-service` y Swagger (`/docs`) | Público. `POST /v1/session` da el token que piden los pedidos y el asistente |
 | `https://<DOMAIN>/v1/assistant/...` | `assistant-service`: el timeline de cada pedido y las preguntas al asistente (`POST /v1/assistant/ask`) | Público, con un rate limit de 5 preguntas por minuto por IP y un tope diario de llamadas al modelo |
 | `https://mailpit.<DOMAIN>` | Mailpit: los emails que envía `notification-service` (no se entregan a nadie) | Basic auth de Caddy |
 | `https://grafana.<DOMAIN>` | Grafana con el dashboard del proyecto | Basic auth de Caddy, y después el login de Grafana |
@@ -76,7 +76,7 @@ cd event-driven-orders
 python3 scripts/generate_env.py --template deploy/env.production.example --output .env.production
 ```
 
-El script llena cada contraseña vacía (RabbitMQ, las tres bases, Redis y Grafana) con un valor aleatorio y nunca sobrescribe un `.env.production` que ya exista. `.env.production` no se versiona.
+El script llena con un valor aleatorio cada contraseña vacía (RabbitMQ, las tres bases, Redis y Grafana) y la clave que firma las sesiones (`AUTH_TOKEN_SECRET`, [ADR-0027](adr/0027-identidad-anonima-firmada.md)). Nunca toca un valor de un `.env.production` que ya exista; solo le agrega las claves nuevas del template. Por eso, después de un `git pull` que trae una clave nueva, basta con volver a correrlo. `.env.production` no se versiona.
 
 Quedan tres cosas por completar a mano.
 
@@ -158,6 +158,7 @@ Las migraciones de Alembic corren solas al arrancar cada servicio ([ADR-0016](ad
 - **Cambiar una contraseña de Postgres, de Grafana o de RabbitMQ:** los tres guardan la contraseña con la que se creó su volumen. Cambiarla en `.env.production` no alcanza; regenerar todo exige `edo down -v`, que borra los pedidos, el stock, los mensajes pendientes y la configuración de Grafana. Las de basic auth sí se cambian con `set_hash` y `edo up -d caddy`.
 - **Cambiar los argumentos de una cola:** las colas viven en el volumen de RabbitMQ, que no acepta redeclarar una cola existente con otros argumentos. Si un deploy cambia una en `app/core/messaging/topology.py`, el servicio arranca sin consumir y lo registra en su log. Hay que borrar la cola, con lo que se pierden sus mensajes pendientes, y reiniciar el servicio para que la cree de nuevo: `edo exec rabbitmq rabbitmqctl delete_queue <cola>` y `edo restart <servicio>`.
 - **Cuota del asistente:** las llamadas al modelo del día se cuentan en Redis, con la fecha de la hora del Pacífico, que es cuando Gemini reinicia su cuota: `edo exec redis redis-cli get model-calls:$(TZ=America/Los_Angeles date +%F)`. Pasadas 400 (`LLM_DAILY_CALL_LIMIT`), el asistente responde 503 hasta la medianoche del Pacífico, entre las 3:00 y las 5:00 en Chile según el horario de verano de cada país.
+- **Rotar `AUTH_TOKEN_SECRET`:** cierra todas las sesiones, y cada visitante tendrá que pedir otra con `POST /v1/session`. Los dos servicios que la usan tienen que reiniciarse juntos: `edo up -d order-service assistant-service`.
 - **Memoria:** `docker stats --no-stream` muestra el uso por contenedor. Revisa en la consola de Oracle que la memoria de la VM quede sobre el 20 % (paso 1).
 
 ## Limitaciones conocidas
@@ -177,6 +178,7 @@ Las migraciones de Alembic corren solas al arrancar cada servicio ([ADR-0016](ad
 | Caddy no logra el certificado | El dominio no resuelve a la IP de la VM, el puerto 80 está cerrado o se alcanzó el límite de Let's Encrypt (paso 4): `edo logs caddy` dice cuál |
 | Un servicio no se conecta a su Postgres o a RabbitMQ después de regenerar `.env.production` | El volumen tiene la contraseña anterior (ver Operación) |
 | Un servicio no consume después de un deploy y su log dice `PRECONDITION_FAILED - inequivalent arg` | El deploy cambió los argumentos de una cola que ya existe (ver Operación) |
+| `order-service` o `assistant-service` se reinician en loop y su log nombra `AUTH_TOKEN_SECRET` | Falta en `.env.production` o tiene menos de 32 bytes: vuelve a correr el script del paso 4, que la agrega |
 | `assistant-service` se reinicia en loop y su log nombra `GEMINI_API_KEY` | `LLM_PROVIDER=gemini` sin clave en `.env.production` (paso 4) |
 | El asistente responde `the assistant ran out of model quota` | Se agotó el tope diario o la cuota de Gemini; vuelve después de la medianoche del Pacífico (ver Operación) |
 | `"model": "fake"` en las respuestas del asistente | Falta `LLM_PROVIDER=gemini` en `.env.production`, o no se recreó el servicio: `edo up -d assistant-service` |
