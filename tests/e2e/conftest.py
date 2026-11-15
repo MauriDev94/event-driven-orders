@@ -14,7 +14,8 @@ import base64
 import json
 import os
 import time
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -143,10 +144,8 @@ def _subject_of(token: str) -> str:
     return str(json.loads(base64.urlsafe_b64decode(padded))["sub"])
 
 
-@pytest.fixture
-def customer_session(order_client: httpx.Client) -> Generator[CustomerSession, None, None]:
-    """A fresh session per test over HTTP, so Mailpit inboxes never collide.
-    The email recipient is ``<customer_id>@example.com`` (ADR-0010)."""
+@contextmanager
+def _open_session(order_client: httpx.Client) -> Iterator[CustomerSession]:
     response = order_client.post("/v1/session")
     assert response.status_code == 201, response.text
     token = response.json()["access_token"]
@@ -156,3 +155,30 @@ def customer_session(order_client: httpx.Client) -> Generator[CustomerSession, N
         httpx.Client(base_url=ASSISTANT_SERVICE_URL, timeout=10.0, headers=headers) as assistant,
     ):
         yield CustomerSession(customer_id=_subject_of(token), client=client, assistant=assistant)
+
+
+@pytest.fixture
+def customer_session(order_client: httpx.Client) -> Generator[CustomerSession, None, None]:
+    """A fresh session per test over HTTP, so Mailpit inboxes never collide.
+    The email recipient is ``<customer_id>@example.com`` (ADR-0010)."""
+    with _open_session(order_client) as session:
+        yield session
+
+
+@pytest.fixture
+def other_customer_session(order_client: httpx.Client) -> Generator[CustomerSession, None, None]:
+    """A second visitor with a session of their own, for isolation tests."""
+    with _open_session(order_client) as session:
+        yield session
+
+
+def ask_assistant(assistant_client: httpx.Client, question: str) -> dict[str, Any]:
+    """Ask the assistant and return the body. The rate limit (5 questions per
+    minute per client IP) also counts questions asked by hand, so a 429 is
+    waited out once with its Retry-After."""
+    response = assistant_client.post("/v1/assistant/ask", json={"question": question})
+    if response.status_code == 429:
+        time.sleep(int(response.headers["Retry-After"]) + 1)
+        response = assistant_client.post("/v1/assistant/ask", json={"question": question})
+    assert response.status_code == 200, response.text
+    return dict(response.json())

@@ -440,6 +440,7 @@ Cubren:
 - **Camino de rechazo**: `POST /v1/orders` con `SKU-005` pidiendo `quantity=999` -> polling hasta `status == "rejected"` -> verifica el email de rechazo (incluye el SKU insuficiente) en Mailpit.
 - **Timeline del asistente**: los mismos dos caminos, con polling hasta que `GET /v1/assistant/orders/{id}/timeline` muestra los tres eventos en orden (`order.created`, `stock.reserved` | `stock.rejected`, `order.confirmed` | `order.rejected`). Verifica el estado, el total, los ítems, el motivo del rechazo y que el `X-Correlation-ID` del POST llegue a cada evento. Un pedido desconocido responde 404.
 - **Preguntas al asistente**: un pedido rechazado de verdad y `POST /v1/assistant/ask` preguntando por qué. La respuesta tiene que citar el pedido con los tres eventos de su timeline (con `fake`, también se compara el texto exacto). Un pedido desconocido da `no_data`.
+- **Aislamiento entre visitantes**: cada test abre su propia sesión con `POST /v1/session`. A crea un pedido, y B recibe en `GET /v1/orders/{id}` y en el timeline el mismo 404 que con un pedido inexistente. Si B le pregunta al asistente por ese pedido o por sus pedidos, el asistente responde `no_data` o lista solo los de B, y nunca cita el de A.
 
 Todos usan **polling con timeout** (`wait_until`, sin `sleep` fijos) porque la propagación entre servicios es asíncrona. Marcados `@pytest.mark.e2e`.
 
@@ -527,6 +528,7 @@ Las más significativas:
 | [0024](docs/adr/0024-tope-diario-de-llamadas-al-modelo.md) | Tope diario de llamadas al modelo, por día del Pacífico | Muchos visitantes juntos no agotan la cuota gratis de Gemini: el servicio corta antes que Google |
 | [0025](docs/adr/0025-verificacion-de-hechos-y-filtracion-del-prompt.md) | Verificación de montos y SKU, y reemplazo de una respuesta que copia el prompt (`leaked`) | Un monto inventado o una regla del prompt copiada no llegan al cliente como `answered` |
 | [0026](docs/adr/0026-redis-compartido-ttl-y-topes.md) | Un Redis con `volatile-ttl`: toda clave con TTL y topes por minuto | Llenar la caché no desaloja el contador diario, y el asistente no pasa de forma sostenida la cuota por minuto de Gemini |
+| [0027](docs/adr/0027-identidad-anonima-firmada.md) | Sesión anónima firmada: `order-service` emite un JWT y los dos servicios lo verifican | Cada visitante ve solo sus pedidos sin cuentas ni contraseñas, y un pedido ajeno responde igual que uno que no existe |
 
 **[Ver los 28 ADRs →](docs/adr/README.md)**
 
@@ -536,7 +538,7 @@ Las más significativas:
 
 - **Outbox transaccional** para eliminar la ventana de dual-write *publish-after-commit* ([ADR-0005](docs/adr/0005-publish-after-commit-en-vez-de-outbox.md)).
 - **Tracing distribuido** (OpenTelemetry + Jaeger) — el correlation ID end-to-end ([ADR-0012](docs/adr/0012-logging-json-y-correlation-id.md)) ya es la base para esta instrumentación.
-- **Auth en `order-service`** (JWT) para proteger `/v1/orders`.
+- **Cookie `HttpOnly` y "mis pedidos"** (`GET /v1/orders`) para el SPA del Paso 7, sobre la sesión anónima de [ADR-0027](docs/adr/0027-identidad-anonima-firmada.md). Hoy el token viaja en el header `Authorization` y no tiene refresh ni revocación.
 - **Customer directory service** para resolver `customer_id -> email` real (hoy es un placeholder `{customer_id}@example.com`).
 - **Idempotencia persistente en `notification-service`** (`processed_events`) para reemplazar el dedup en memoria, que no sobrevive reinicios ([ADR-0009](docs/adr/0009-notification-service-sin-base-de-datos.md)).
 - **Orquestación con Kubernetes** — hoy el stack de producción está pensado para Docker Compose en una sola VM (ver [Despliegue](#despliegue)).

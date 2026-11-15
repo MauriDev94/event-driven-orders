@@ -12,28 +12,16 @@ asked by hand, so a 429 is waited out once with its Retry-After.
 Run with: `make e2e` (Docker required). Not part of CI (ADR-0017).
 """
 
-import time
 import uuid
 from collections.abc import Callable
-from typing import Any
-
 import httpx
 import pytest
-from conftest import CustomerSession
+from conftest import CustomerSession, ask_assistant
 
 pytestmark = pytest.mark.e2e
 
 _SKU_LOW_STOCK = "SKU-005"  # seeded with 5 units
 _REASON = f"insufficient stock for product {_SKU_LOW_STOCK}"
-
-
-def _ask(assistant_client: httpx.Client, question: str) -> dict[str, Any]:
-    response = assistant_client.post("/v1/assistant/ask", json={"question": question})
-    if response.status_code == 429:
-        time.sleep(int(response.headers["Retry-After"]) + 1)
-        response = assistant_client.post("/v1/assistant/ask", json={"question": question})
-    assert response.status_code == 200, response.text
-    return response.json()
 
 
 def _rejected_order(
@@ -67,7 +55,7 @@ def test_assistant_explains_a_rejection_citing_the_order_and_its_events(
         customer_session.client, customer_session.assistant, wait_until
     )
 
-    body = _ask(customer_session.assistant, f"¿Por qué se rechazó el pedido {order_id}?")
+    body = ask_assistant(customer_session.assistant, f"¿Por qué se rechazó el pedido {order_id}?")
 
     assert body["outcome"] == "answered"
     assert {"order_id": order_id, "event_ids": event_ids} in body["citations"]
@@ -79,7 +67,7 @@ def test_assistant_explains_a_rejection_citing_the_order_and_its_events(
 def test_assistant_says_it_has_no_data_for_an_unknown_order(
     customer_session: CustomerSession,
 ) -> None:
-    body = _ask(customer_session.assistant, f"¿Qué pasó con el pedido {uuid.uuid4()}?")
+    body = ask_assistant(customer_session.assistant, f"¿Qué pasó con el pedido {uuid.uuid4()}?")
 
     assert body["outcome"] == "no_data"
     assert body["citations"] == []
